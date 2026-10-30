@@ -1,5 +1,36 @@
 # Validated public-data run on Kaggle T4
 
+## Latest validated candidate: selective LoRA
+
+Code tested: 8ff20b2a417b7155eb136692f6d750b07270552c. Date: 2026-10-30.
+Source: team member's official Kaggle console output. Preserve original JSON,
+logs and saved notebook from runs_lora_selective; those files are not copied here.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 87.33 | 14345 |
+| solution_1 | 74.39 | 10343 |
+| solution_2 | 76.59 | 10343 |
+| base_2 | 82.71 | 14345 |
+
+Mean times 85.02s / 75.49s; reported speedup 1.126x (about 11.2% less wall time).
+Memory ratio 1.387x, reduction 27.9% or 4002MiB. Eval loss displayed as
+2.04966 / 2.04965; reported relative change -0.000%. Own-kernel share 6.9%,
+lowest of the two solution runs. All ten checks passed, including clean T4
+measurement, identical task/outputs within tolerance and 79 Soup regression tests.
+LoRA's isolated three-test suite passed on T4 before this full run.
+
+The combined solution includes NF4, RMSNorm, entropy, the MLP bridge, selective
+LoRA and the starter SwiGLU. These total gains are NOT an isolated LoRA ablation.
+Separate repeated component benchmarks established about 1.10x for 2048-token
+q-like projections with AMP. Other shapes retain the original PEFT path.
+
+IMPORTANT: teammate commit 549d1c5 subsequently wired chunked loss into apply().
+That code is not included in this validated run. New integration must independently
+pass the GPU suite and every official rule before inheriting any score claims.
+Keep the exact 8ff20b2 pin as a validated fallback and the current benchmark source.
+Hidden rows/seed and final manual jury review remain outstanding.
+
 ## Latest validated candidate: MLP bridge
 
 Code tested: 968e327172552a97023f4f0aef91fa9f337f5f2e. Date: 2026-10-30.

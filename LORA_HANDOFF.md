@@ -4,7 +4,7 @@ Team synchronization: fetched and fast-forwarded shared intoxicated/nf4-lora to
 450c916 before implementation. Preserved teammate CE/chunked-loss files and their
 bench_candidate.py edits. Repeated T4 validation of the selective path has now
 passed; apply() now enables patch_lora() with the SELECTIVE policy only.
-End-to-end validation is still pending. No loss/CE code is modified here.
+End-to-end validation PASSED at 8ff20b2 (details below). No loss/CE code is modified here.
 
 Files owned by this workstream:
 - solution/lora_fusion.py: independent Triton scaled-add/cast forward and scaled
@@ -60,7 +60,16 @@ python -m solution.bench_lora --tokens 2048 --out-features 1536 --rounds 4
 python -m solution.bench_lora --tokens 512 --out-features 1536 --rounds 4
 ```
 
-## Full-command acceptance (next step)
+## Full-command acceptance: passed at 8ff20b2
+
+User's repeated official run: base 87.33/82.71s, solution 74.39/76.59s;
+reported 1.126x speedup, 14345->10343MiB (1.387x ratio), eval loss
+2.04966->2.04965, own-kernel share 6.9%, ALL 10 CHECKS PASSED and 79 Soup tests.
+Full combined gains cannot be attributed solely to LoRA without a same-session
+on/off ablation. Preserve 8ff20b2 as tested pin. Team subsequently added
+549d1c5 (chunked-loss integration); it requires separate combined validation.
+
+Reproduction:
 
 Use idle T4 and the standard pinned notebook environment. If the session was
 restarted, run task/prepare_data.py to restore public data first.
