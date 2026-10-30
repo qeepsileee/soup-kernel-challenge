@@ -68,6 +68,31 @@ def main():
 
     report("RMSNorm fwd+bwd", measure(lambda: rms(False)), measure(lambda: rms(True)))
     del x, w, grad
+
+    # Benchmark Fused Cross-Entropy vs PyTorch CE + autograd backward + entropy
+    from .fused_ce import fused_cross_entropy
+    import torch.nn.functional as F
+
+    chunk_tokens = min(args.tokens, 128)
+    logits_bench = torch.randn((chunk_tokens, 151936), device="cuda", dtype=torch.float16)
+    targets_bench = torch.randint(0, 151936, (chunk_tokens,), device="cuda", dtype=torch.long)
+    targets_bench[targets_bench % 3 == 0] = -100  # mix in prompt/pad tokens
+
+    def bench_pyt():
+        l = logits_bench.clone().requires_grad_(True)
+        wide = l.float()
+        loss = F.cross_entropy(wide, targets_bench, ignore_index=-100, reduction="sum") / chunk_tokens
+        loss.backward()
+        with torch.no_grad():
+            reference_entropy(l.float())
+
+    def bench_fused():
+        l = logits_bench.clone()
+        fused_cross_entropy(l, targets_bench, denom=chunk_tokens, needs_grad=True, inplace_grad=True)
+
+    report(f"Fused CE ({chunk_tokens}x152k)", measure(bench_pyt, 10), measure(bench_fused, 10))
+    del logits_bench, targets_bench
+
     logits = torch.randn((args.tokens, 151936), device="cuda", dtype=torch.float32)
     with torch.no_grad():
         expected = reference_entropy(logits)
