@@ -1,7 +1,34 @@
-"""NF4 linear with our decoder in forward AND backward, cuBLAS for GEMMs."""
+"""NF4 linear: retain bnb's custom GEMM selection, accelerate its unfused path."""
 from importlib.metadata import version
 import torch
 from .nf4 import dequantize_nf4, supported
+
+
+def uses_custom_gemm(x, state):
+    """Mirror the installed 0.50.2 dispatch, without copying its heuristic code."""
+    from bitsandbytes.backends.cuda import ops
+
+    m = x.numel() // x.shape[-1]
+    if m > ops._gemm_4bit_custom_max_m or x.shape[-1] % state.blocksize:
+        return False
+    return ops._gemm_4bit_use_custom_fn(
+        x.device.index, x.dtype, m, state.shape[0], state.shape[1])
+
+
+def original_custom_forward(x, packed, bias, state):
+    # Preserve the fused GEMM's weight/bias arithmetic exactly. In particular,
+    # materializing rounded FP16 W before cuBLAS is not equivalent at tiny M.
+    if state.nested:
+        if state.state2.blocksize != 256:
+            raise NotImplementedError("bnb 0.50.2 fused GEMM requires scale blocksize 256")
+        return torch.ops.bitsandbytes.gemm_4bit.default(
+            x, packed.view(-1, 1), state.shape, state.state2.absmax,
+            state.blocksize, state.quant_type, bias=bias,
+            absmax_8bit=state.absmax, absmax_code=state.state2.code,
+            absmax_offset=state.offset)
+    return torch.ops.bitsandbytes.gemm_4bit.default(
+        x, packed.view(-1, 1), state.shape, state.absmax,
+        state.blocksize, state.quant_type, bias=bias)
 
 
 class NF4Linear(torch.autograd.Function):
@@ -9,6 +36,8 @@ class NF4Linear(torch.autograd.Function):
     def forward(ctx, x, packed, bias, state):
         ctx.state = state
         ctx.save_for_backward(packed)
+        if uses_custom_gemm(x, state):
+            return original_custom_forward(x, packed, bias, state)
         w = dequantize_nf4(packed, state).to(x.dtype)
         return torch.nn.functional.linear(x, w, bias)
 

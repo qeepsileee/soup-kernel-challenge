@@ -27,6 +27,35 @@ class CandidateTests(unittest.TestCase):
                 torch.testing.assert_close(actual, ref, rtol=3e-3, atol=1e-2)
                 torch.testing.assert_close(b.grad, a.grad, rtol=3e-3, atol=1e-2)
 
+    def test_nf4_dispatch_small_and_training_batches(self):
+        import bitsandbytes as bnb
+        import bitsandbytes.functional as functional
+        import torch
+        from solution.nf4_linear import NF4Linear, unpatch_linear, uses_custom_gemm
+        unpatch_linear()
+        torch.manual_seed(152)
+        w = torch.randn((256, 1536), device="cuda", dtype=torch.float16)
+        for nested in (False, True):
+            packed, state = functional.quantize_4bit(w, quant_type="nf4", compress_statistics=nested)
+            for tokens in (34, 512, 2048):
+                for with_bias in (False, True):
+                    with self.subTest(tokens=tokens, bias=with_bias, nested=nested):
+                        bias = torch.randn(256, device="cuda", dtype=torch.float16) if with_bias else None
+                        x = torch.randn((tokens, 1536), device="cuda", dtype=torch.float16)
+                        grad = torch.randn((tokens, 256), device="cuda", dtype=torch.float16) * 8
+                        a = x.detach().clone().requires_grad_(True)
+                        expected = bnb.matmul_4bit(a, packed, state, bias=bias)
+                        expected.backward(grad)
+                        b = x.detach().clone().requires_grad_(True)
+                        actual = NF4Linear.apply(b, packed, bias, state)
+                        actual.backward(grad)
+                        # Same custom operator on that branch; require bitwise equality.
+                        if uses_custom_gemm(x, state):
+                            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+                        else:
+                            torch.testing.assert_close(actual, expected, rtol=3e-3, atol=1e-2)
+                        torch.testing.assert_close(b.grad, a.grad, rtol=3e-3, atol=1e-2)
+
     def test_rmsnorm_rounding_and_backward(self):
         import torch
         from solution.rmsnorm import FrozenRMSNorm

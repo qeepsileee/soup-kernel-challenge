@@ -18,6 +18,16 @@ rmsnorm.py is a supplemental implementation to coordinate with participant 2;
 entropy.py is a supplemental metric optimization to coordinate with participant 1.
 Do not apply two competing patches to the same function.
 
+CUDA feedback at ac98191: 17 tests passed, NF4 forward comparison failed for
+34 tokens, out=256/in=1536 with bias (51/8704 mismatches, max abs 0.02637).
+The new implementation now consults bnb 0.50.2's own dispatch function. If bnb
+selects its custom GEMM, invoke that same torch operator with the same nested
+quantization arguments; do NOT replace it with rounded-W + F.linear. Only the
+unfused branch uses our decoder in forward. Backward retains our decoder +
+torch.matmul, as before. This fix awaits CUDA confirmation; tolerances were not
+relaxed. Added plain/nested cases at M=34/512/2048, with/without bias, requiring
+bitwise output equality on the custom-GEMM branch.
+
 RMSNorm preserves the normalized-value cast before multiplying the frozen norm
 weight, the promoted output dtype and gradient rounding through the cast.
 Entropy computes each token's entropy, using local max/exp sum/shifted moment
