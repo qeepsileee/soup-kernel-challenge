@@ -26,7 +26,7 @@ def can_bridge(module, x):
     return True
 
 
-def bridged_mlp(module, x):
+def bridged_mlp(module, x, activation=None):
     import bitsandbytes as bnb
     from .swiglu import swiglu
 
@@ -39,7 +39,7 @@ def bridged_mlp(module, x):
     up = project(module.up_proj, x.to(torch.float16))
     # Example kernel evaluates activation in FP32, rounds only its output. The
     # baseline down_proj immediately rounds that same output to FP16 anyway.
-    hidden = swiglu(gate, up)
+    hidden = (swiglu if activation is None else activation)(gate, up)
     output = project(module.down_proj, hidden)
     return output.to(x.dtype)
 
