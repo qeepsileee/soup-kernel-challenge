@@ -1,19 +1,40 @@
 # Participant 3: NF4 and ввсеLoRA
 
-Status: first decoder validated on Kaggle by the user; first full run failed
-admission (coverage and idle-GPU checks). Inline-decode dX passed 14 GPU tests
-but was rejected for poor T4 performance. CURRENT default is decode-once + dense
-Triton GEMM candidate, awaiting CUDA validation. Local machine has no CUDA.
+CURRENT STATUS: apply() enables ONLY the validated NF4 decoder plus the starter
+SwiGLU. Both custom dX GEMM experiments are DISABLED in training because they
+regressed in the user's T4 measurements. The dense candidate passed 15 tests,
+but q/o were ~3.5x slower and gate/up/down ~3.9-6.5x slower than baseline.
+The experimental kernels remain callable for reproducing the measurements.
+
+Decoder-only own-kernel coverage was 1.7% in the initial full run, so this module
+alone does NOT meet the 5% admission gate. Team Loss/Fusion kernels are not yet
+available. Final admission requires real useful work totaling >=5%, plus a clean
+repeat measurement. Do not claim admission or a verified NF4-only memory gain.
+
+Next: benchmark decoder-only with the command below, including 512 and 2048
+tokens. Then perform a clean full repeated measurement, in a separate output
+directory to preserve old results. Adding team kernels is still required if
+coverage stays below 5%.
+
+```bash
+python -m solution.bench_nf4 --tokens 512 --iterations 100 --summary
+python -m solution.bench_nf4 --tokens 2048 --iterations 100 --summary
+python harness/run_task.py --repeats 2 --out runs_decoder_clean
+python harness/check_rules.py --help
+```
+
+The first full run passed 79 Soup tests, quality and output comparisons, but
+failed coverage and idle-GPU checks. Local machine has no CUDA.
 This is not a final hackathon submission.
 
-## Current candidate: separate decoding and dense GEMM
+## Rejected candidate: separate decoding and dense GEMM
 
 The user's 512-token microbenchmark at 5821ca4 showed inline-decode dX caused
 severe regressions: gate 1.044ms -> 24.183ms, up 1.030ms -> 24.514ms,
 down 1.087ms -> 23.491ms. Standalone decode was 1.11-1.81x faster, error 0.
 Avoid a full training run with that inline-decode candidate.
 
-Default patch_input_grad() now selects input_grad_dense(): decode W once with
+When explicitly called, patch_input_grad() selects input_grad_dense(): decode W once with
 our decoder, then call our tiled dense GEMM, accumulating in FP32 with FP16
 inputs/output. Dense W is a temporary of this backward call; no persistent cache.
 This reintroduces the one-weight temporary but avoids redundant NF4 unpacking
@@ -25,9 +46,9 @@ python -m pytest solution -q
 python -m solution.bench_nf4 --dense-dx --tokens 512 --iterations 20 --summary
 ```
 
-Only after correctness and acceptable speed, measure the full run with repeats
-and check rules. Consider keeping decoder-only if the team fusion/loss kernels
-already provide >=5% coverage and the dense GEMM is not beneficial overall.
+Measured at fb49813: q 0.718 -> 2.475ms, k 0.702 -> 0.689ms,
+v 0.662 -> 0.739ms, o 0.681 -> 2.472ms, gate 2.061 -> 8.045ms,
+up 1.263 -> 8.190ms, down 1.301 -> 8.073ms. This candidate is rejected.
 
 ## History of earlier candidates
 
@@ -39,8 +60,8 @@ result: own-kernel share is 1.7% (<5%); GPUs were not idle at baseline start
 attribute the total improvement to NF4 or treat these as clean official numbers.
 
 Second candidate adds nf4_matmul.py: tiled FP16 dY @ NF4-W with inline nested
-decode, so backward need not allocate full dense W. apply() enables it in addition
-to the first decoder. Frozen base weight/bias only; bnb version 0.50.2 only;
+decode, so backward need not allocate full dense W. apply() enabled it at 5821ca4;
+CURRENT apply() does not enable it. Frozen base weight/bias only; bnb version 0.50.2 only;
 unsupported paths use original backward. Forward and PEFT dropout stay unchanged.
 This candidate is NOT CUDA-tested yet. CPU checks do not compile Triton.
 

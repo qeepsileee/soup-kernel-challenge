@@ -16,8 +16,8 @@ The rules in short (the README and the task statement have the full ones):
 def apply():
     from .swiglu import patch_qwen2_mlp
     from .nf4 import patch_dequantize
-    from .nf4_matmul import patch_input_grad
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
-    patch_dequantize()  # participant 3: candidate NF4 decoder, CUDA validation required
-    patch_input_grad()  # decode once + dense Triton dX; CUDA validation required
+    patch_dequantize()  # participant 3: validated NF4 decoder; retain bnb matmul
+    # Both custom dX GEMM experiments regressed on T4. Keep them opt-in via
+    # bench_nf4 flags, never activate them in the normal training entry point.
