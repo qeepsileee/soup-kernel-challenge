@@ -2,8 +2,9 @@
 
 Team synchronization: fetched and fast-forwarded shared intoxicated/nf4-lora to
 450c916 before implementation. Preserved teammate CE/chunked-loss files and their
-bench_candidate.py edits. apply() is unchanged: LoRA is deliberately opt-in until
-GPU tests/benchmarks pass. No loss/CE code is modified by this workstream.
+bench_candidate.py edits. Repeated T4 validation of the selective path has now
+passed; apply() now enables patch_lora() with the SELECTIVE policy only.
+End-to-end validation is still pending. No loss/CE code is modified here.
 
 Files owned by this workstream:
 - solution/lora_fusion.py: independent Triton scaled-add/cast forward and scaled
@@ -21,8 +22,11 @@ cast/add; enable_fp_fusion=False prevents replacing mul+add with an FMA.
 Unsupported adapters, variants, mixed-batch kwargs, merged/disabled adapters,
 other ranks/dtypes and non-CUDA use the original PEFT forward.
 
-Status: Python syntax checked locally; GPU tests are SKIPPED on this Mac (no
-CUDA/torch/Triton). No speed, memory or training-quality improvement claimed yet.
+Status: real PEFT correctness passed on T4 (3 tests). Repeated q_proj microbench
+at 2048 tokens: AMP median 1.100x with paired ratios 1.096/1.100/1.101/1.102;
+no-AMP median 1.148x, paired 1.271/1.145/1.152/1.151. Small q fallback measured
+0.975x / 0.966x in this diagnostic; no full-command gain is claimed. Locally only
+syntax/CPU skips are available (no CUDA/torch/Triton).
 
 ## First T4 feedback and selective candidate
 
@@ -41,8 +45,8 @@ selects only in=1536, out=1536, row_count>=2048; small q/v use the exact origina
 forward. This is static geometry specialization, independent of profiling,
 measurement, tests, data values, seed or hidden rows. The all policy remains
 available explicitly for correctness tests/comparison. Selection itself needs
-GPU validation. apply() STILL DOES NOT enable LoRA; no unvalidated LoRA behavior
-is introduced into the shared training entry point.
+GPU validation, which has now passed (including bitwise selective forward and
+fallback tests). apply() now enables it for end-to-end measurement.
 
 The revised benchmark alternates order across >=2 rounds (4 default), reports
 median times and individual paired ratios. Use it to confirm the promising
@@ -55,6 +59,22 @@ python -m pytest solution/test_lora_fusion.py -q
 python -m solution.bench_lora --tokens 2048 --out-features 1536 --rounds 4
 python -m solution.bench_lora --tokens 512 --out-features 1536 --rounds 4
 ```
+
+## Full-command acceptance (next step)
+
+Use idle T4 and the standard pinned notebook environment. If the session was
+restarted, run task/prepare_data.py to restore public data first.
+
+```bash
+python harness/run_task.py --repeats 2 --out runs_lora_selective
+python harness/check_rules.py --result runs_lora_selective/result.json
+```
+
+Compare against the validated 968e327 solution, not only the original baseline:
+the LoRA patch must justify its cold compilation/dispatch overhead over 64 steps.
+Do not replace validated score claims until this run passes every rule. If there
+is no material overall benefit, keep the LoRA implementation as a documented
+experiment and remove its apply() call. Fresh fetch/fast-forward precedes push.
 
 Kaggle, isolated from teammate tests that may still be under development:
 
