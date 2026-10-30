@@ -10,7 +10,7 @@ def can_bridge(module, x):
     import bitsandbytes as bnb
     from .nf4 import supported
 
-    if not x.is_cuda or x.dtype != torch.float32 or x.numel() == 0:
+    if not x.is_cuda or x.dtype not in (torch.float16, torch.float32) or x.numel() == 0:
         return False
     if getattr(getattr(module, "config", None), "hidden_act", "silu") != "silu":
         return False

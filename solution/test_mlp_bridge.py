@@ -1,4 +1,5 @@
 import unittest
+from itertools import product
 from solution.test_nf4 import GPU_AVAILABLE
 
 
@@ -25,9 +26,9 @@ class MLPBridgeTests(unittest.TestCase):
             setattr(module, name, layer.cuda())
         patch_linear()
         try:
-            for length in (17, 129, 512):
-                with self.subTest(length=length):
-                    a = torch.randn((2, length, 1536), device="cuda", dtype=torch.float32,
+            for length, dtype in product((17, 129, 512), (torch.float32, torch.float16)):
+                with self.subTest(length=length, dtype=dtype):
+                    a = torch.randn((2, length, 1536), device="cuda", dtype=dtype,
                                     requires_grad=True)
                     b = a.detach().clone().requires_grad_(True)
                     grad = torch.randn_like(a) * 8
@@ -46,10 +47,13 @@ class MLPBridgeTests(unittest.TestCase):
                     with torch.autograd.graph.saved_tensors_hooks(lambda v: pack(v, 1), lambda v: v):
                         actual = bridged_mlp(module, b)
                     actual.backward(grad)
-                    self.assertEqual(actual.dtype, torch.float32)
+                    self.assertEqual(actual.dtype, dtype)
                     torch.testing.assert_close(actual, ref, rtol=0, atol=0)
                     torch.testing.assert_close(b.grad, a.grad, rtol=2e-5, atol=2e-5)
-                    self.assertLess(sizes[1], sizes[0])
+                    if dtype == torch.float32:
+                        self.assertLess(sizes[1], sizes[0])
+                    else:
+                        self.assertEqual(sizes[1], sizes[0])
         finally:
             unpatch_linear()
 
