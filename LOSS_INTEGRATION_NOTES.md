@@ -1,5 +1,17 @@
 # Combined chunked-head / parallel-CE candidate
 
+## Validated on Kaggle T4
+
+983074da7f131839065723c821736e2d57a19c1d passed 43 solution tests and the
+complete repeated official run. 84.1s -> 71.7s (1.173x), 14345MiB -> 6263MiB
+(2.290x memory ratio, 56.3% reduction), eval loss 2.04967 -> 2.04965,
+own-kernel share 8.1%; all 10 checks and 79 Soup tests passed. See
+VALIDATED_RESULTS.md for per-run values, attribution limits and artifact paths.
+The complete pipeline is now validated on the public rows/seed. Hidden data
+and manual jury review remain outstanding.
+
+## Implementation history
+
 Authorized by the user to continue participant 1's work on 2026-10-31.
 Fetched origin before editing. Preserved their local recomputation, labelled-row
 compaction, FP32-head conversion and constructor-hook changes, and now commit

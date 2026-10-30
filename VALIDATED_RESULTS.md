@@ -1,6 +1,45 @@
 # Validated public-data run on Kaggle T4
 
-## Latest validated candidate: selective LoRA
+## Latest validated candidate: chunked head + parallel CE
+
+Code tested: 983074da7f131839065723c821736e2d57a19c1d. Recorded: 2026-10-31
+(Asia/Almaty). Source: official harness console supplied by the Kaggle operator.
+Raw artifacts live in runs_chunked_parallel/ in that Kaggle session; preserve
+result.json, checks.json, per-run logs and the saved notebook. No raw JSON was
+independently downloaded or fabricated in this repository.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 86.97 | 14345 |
+| solution_1 | 71.34 | 6263 |
+| solution_2 | 72.12 | 6263 |
+| base_2 | 81.31 | 14345 |
+
+Mean full-command times: 84.14s vs 71.73s. Official speedup 1.173x, about
+14.7% less time. Memory ratio 2.290x; reduction 8082MiB, about 56.3%.
+Eval losses displayed as 2.04967 vs 2.04965, reported relative change -0.001%.
+Own-kernel share: 8.1%, lowest of two solution runs. ALL TEN CHECKS PASSED,
+including clean single-T4 measurement, matching task/outputs within tolerance,
+loss trajectory and 79 Soup regression tests. The complete solution GPU suite
+passed 43 tests before this run.
+
+Active own kernels: tiled CE statistics/merge, AMP-scaled chunk gradient,
+selective LoRA epilogue/gradient, NF4 decoding and RMSNorm forward/backward.
+The starter SwiGLU remains excluded from original-kernel accounting. Unused
+experimental/reference kernels being listed as unlaunched is not a failed check.
+
+Compared with the prior solution peak of 10343MiB, the combined chunked-head
+version uses 4080MiB less. This is cross-run evidence, not an isolated ablation;
+all speed/memory claims describe the full combined configuration. Component CE
+statistics speedup is not the full-training speedup.
+
+Current validated fallback for reproduction/submission: pin EXACTLY 983074d,
+not an untested later code revision. Docs-only commits do not change the tested
+implementation. Open-data/seed checks do not replace hidden-data testing or jury
+manual review. Final README, platform repository, SUBMISSION.md, public saved
+Kaggle notebook with this pin, presentation and demo still need completion.
+
+## Prior validated candidate: selective LoRA
 
 Code tested: 8ff20b2a417b7155eb136692f6d750b07270552c. Date: 2026-10-30.
 Source: team member's official Kaggle console output. Preserve original JSON,
