@@ -1,5 +1,38 @@
 # Validated public-data run on Kaggle T4
 
+## Latest validated candidate: MLP bridge
+
+Code tested: 968e327172552a97023f4f0aef91fa9f337f5f2e. Date: 2026-10-30.
+Source: user-supplied official harness console output; raw JSON lives in the
+Kaggle runs_mlp_bridge directory and has not been independently downloaded here.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 78.94 | 14345 |
+| solution_1 | 76.83 | 10343 |
+| solution_2 | 77.59 | 10343 |
+| base_2 | 84.41 | 14345 |
+
+Official mean: base 81.7s, solution 77.2s. Reported speedup 1.058x, above the
+1.05 scoring threshold in this run. Peak memory ratio 1.387x; reduction 4002MiB,
+about 27.9%. Eval losses displayed as 2.04966 / 2.04964; reported -0.001%.
+Own-kernel coverage 6.2%, lowest of two runs. All ten automatic checks passed;
+79 Soup tests passed. Component suite previously passed 20 tests on T4.
+
+Against the prior validated solution peak (12383MiB), the bridge reduced peak
+by another 2040MiB. This comparison is between runs, not a controlled ablation;
+the full baseline/solution metrics describe the combined solution including the
+starter SwiGLU. Example kernels are NOT counted as original team work.
+
+Keep 968e327 as the tested code revision for reproduction. Subsequent docs-only
+commits do not require replacing its pin. Preserve the saved Kaggle version and
+runs_mlp_bridge/result.json, checks.json and per-run logs for team handoff.
+Hidden-data quality, coverage and timing still need the jury's validation;
+automatic checks do not replace manual review. Speed is only modestly above
+the 5% threshold, with visible variation in the two base runs.
+
+## Prior validated candidate: decoder + RMSNorm + entropy
+
 Code tested: d863fedf70cbcf6c8794e0dfb27bbe2cc69e8a6d.
 Date: 2026-10-30. Source: console output supplied by the team member running Kaggle;
 the original runs/result.json and runs/checks.json should also be preserved in
