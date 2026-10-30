@@ -112,7 +112,8 @@ class PatchChunkedLossTests(unittest.TestCase):
         hook.remove()
 
         # Forward is restored after remove
-        self.assertIs(model.forward, original_fwd)
+        self.assertIs(model.forward.__func__, original_fwd.__func__)
+        self.assertIs(model.forward.__self__, original_fwd.__self__)
 
     def test_chunked_loss_agrees_with_full_logits(self):
         """Chunked loss must match full PyTorch CE to within FP16 rounding."""

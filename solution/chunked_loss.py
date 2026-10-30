@@ -1,25 +1,17 @@
-"""Chunked LM Head + Fused Cross-Entropy + Backward.
+"""Chunked frozen head with parallel CE statistics and AMP-safe recomputation.
 
-Eliminates full logits materialization:
-Instead of computing full [B, T, V] logits (up to 1.25 GB in FP32),
-this processes tokens in chunks (e.g. C=64 or 128 tokens) along sequence:
-1. Z_chunk = H_chunk @ W_head.T (cuBLAS GEMM)
-2. Fused CE Triton kernel computes loss, per-token entropy, accuracy hits,
-   and in-place writes dZ_chunk = (softmax(z) - one_hot) / denom into Z_chunk buffer.
-3. dH_chunk = dZ_chunk @ W_head (cuBLAS GEMM)
-4. Deallocates Z_chunk immediately.
-
-In backward:
-- Incoming grad_loss contains PyTorch AMP loss scaler (e.g. 65536.0 or 1.0).
-- Multiplies saved unscaled d_hidden by grad_loss.
-- Returns loss and ChunkedStep for Soup RewindTrainer and TRL metrics.
+Forward retains only hidden states and compact per-token statistics, not logits.
+Backward recomputes labelled rows and applies the actual incoming loss scale
+BEFORE storing FP16 dZ and multiplying by the head. Prompt-token entropy remains.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Optional, Tuple
 import torch
+import triton
+import triton.language as tl
 import torch.nn.functional as F
-from .fused_ce import fused_cross_entropy
+from .parallel_ce import parallel_cross_entropy as fused_cross_entropy
 
 IGNORE_INDEX = -100
 
@@ -38,86 +30,84 @@ def shift_for_next_token(labels: torch.Tensor, ignore_index: int = IGNORE_INDEX)
     return F.pad(labels, (0, 1), value=ignore_index)[..., 1:]
 
 
+@triton.jit
+def chunk_scaled_grad_kernel(Logits, Target, LSE, Upstream,
+                             V: tl.constexpr, DENOM, BLOCK: tl.constexpr):
+    row = tl.program_id(0)
+    col = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
+    z = tl.load(Logits + row * V + col, mask=col < V, other=-float("inf")).to(tl.float32)
+    norm = tl.load(LSE + row)
+    target = tl.load(Target + row)
+    scale = tl.load(Upstream).to(tl.float32) / DENOM
+    value = (tl.exp(z - norm) - (col == target).to(tl.float32)) * scale
+    tl.store(Logits + row * V + col, value, mask=col < V)
+
+
 class _ChunkedHeadLossFunction(torch.autograd.Function):
     @staticmethod
-    def forward(
-        ctx,
-        hidden: torch.Tensor,
-        head_weight: torch.Tensor,
-        target: torch.Tensor,
-        chunk_size: int,
-        denom: float,
-        with_grad: bool,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        batch_size, seq_len, hidden_dim = hidden.shape
-        vocab_size = head_weight.shape[0]
-
-        grad_hidden = torch.zeros_like(hidden) if with_grad else None
-        total_loss = torch.zeros((), dtype=torch.float32, device=hidden.device)
-
-        entropies = []
-        losses = []
-        total_hits = torch.zeros((), dtype=torch.int64, device=hidden.device)
-
-        # Iterate over sequence in chunks of chunk_size tokens
-        for start in range(0, seq_len, chunk_size):
-            stop = min(start + chunk_size, seq_len)
-            c_len = stop - start
-
-            # [B, c_len, D] -> [B * c_len, D]
-            piece = hidden[:, start:stop].reshape(-1, hidden_dim)
-            labels_piece = target[:, start:stop].reshape(-1)
-
-            # cuBLAS GEMM: [B * c_len, D] @ [D, V] -> [B * c_len, V]
-            # Uses the dtype of hidden (FP16 on T4)
-            chunk_logits = torch.matmul(piece, head_weight.t())
-
-            # Fused Triton CE: computes loss, entropy, accuracy, and in-place writes dZ into chunk_logits
-            chunk_loss, chunk_entropy, chunk_hits, _, _ = fused_cross_entropy(
-                logits=chunk_logits,
-                targets=labels_piece,
-                denom=denom,
-                needs_grad=with_grad,
-                inplace_grad=True,  # In-place gradient overwrite saves allocating [chunk, V]
-                block_size=4096,
-            )
-
-            total_loss = total_loss + chunk_loss.sum()
-            total_hits = total_hits + chunk_hits.sum().to(torch.int64)
-
-            # Reshape back to [B, c_len]
-            losses.append(chunk_loss.view(batch_size, c_len))
-            entropies.append(chunk_entropy.view(batch_size, c_len))
-
-            if with_grad:
-                # cuBLAS GEMM for d_hidden: [B * c_len, V] @ [V, D] -> [B * c_len, D]
-                # chunk_logits now holds dZ = (softmax(z) - target) / denom
-                d_piece = torch.matmul(chunk_logits, head_weight)
-                grad_hidden[:, start:stop] = d_piece.view(batch_size, c_len, hidden_dim)
-
-            # Explicitly drop the [B * c_len, V] temporary buffer
-            del chunk_logits
-
-        token_loss = torch.cat(losses, dim=1)
-        token_entropy = torch.cat(entropies, dim=1)
-
+    def forward(ctx, hidden, head_weight, target, chunk_size, denom, with_grad):
+        batch, length, dim = hidden.shape
+        vocab = head_weight.shape[0]
+        compute = torch.get_autocast_dtype("cuda") if torch.is_autocast_enabled() else hidden.dtype
+        # Cache the frozen head conversion for this invocation, not per chunk.
+        # Do not save this dense converted head across forward/backward.
+        weight = head_weight.to(compute)
+        flat = hidden.reshape(-1, dim)
+        labels = target.reshape(-1)
+        rows = flat.shape[0]
+        chunk_rows = batch * chunk_size
+        losses = torch.empty(rows, device=hidden.device, dtype=torch.float32)
+        entropies = torch.empty_like(losses)
+        hits = torch.empty(rows, device=hidden.device, dtype=torch.int32)
+        lse = torch.empty_like(losses)
+        with torch.autocast("cuda", enabled=False):
+            for start in range(0, rows, chunk_rows):
+                end = min(rows, start + chunk_rows)
+                logits = flat[start:end].to(compute) @ weight.t()
+                loss, entropy, hit, _, _ = fused_cross_entropy(
+                    logits, labels[start:end], denom=denom, needs_grad=False,
+                    lse_out=lse[start:end])
+                losses[start:end], entropies[start:end], hits[start:end] = loss, entropy, hit
+                del logits
+        ctx.compute, ctx.chunk_rows, ctx.denom = compute, chunk_rows, denom
         ctx.with_grad = with_grad
         if with_grad:
-            ctx.save_for_backward(grad_hidden)
+            # One synchronization to compact labels. Prompt/pad rows have zero
+            # loss derivative; do not recompute their head or multiply their dZ.
+            valid = (labels != IGNORE_INDEX).nonzero(as_tuple=False).flatten()
+            ctx.save_for_backward(hidden, head_weight, labels, lse, valid)
+        token_loss = losses.view(batch, length)
+        token_entropy = entropies.view(batch, length)
+        total_hits = hits.sum().to(torch.int64)
         ctx.mark_non_differentiable(token_entropy, token_loss, total_hits)
-
-        normalized_loss = total_loss / denom
-        return normalized_loss, token_entropy, token_loss, total_hits
+        return losses.sum() / denom, token_entropy, token_loss, total_hits
 
     @staticmethod
-    def backward(ctx, grad_loss, _grad_entropy, _grad_token_loss, _grad_hits):
-        if not ctx.with_grad:
+    def backward(ctx, grad_loss, _entropy, _loss, _hits):
+        if not ctx.with_grad or grad_loss is None:
             return None, None, None, None, None, None
-        (grad_hidden,) = ctx.saved_tensors
-        # grad_loss comes from PyTorch autograd / AMP GradScaler and carries loss scaling.
-        # Scale the unscaled d_hidden by grad_loss:
-        scaled_grad_hidden = grad_hidden * grad_loss
-        return scaled_grad_hidden, None, None, None, None, None
+        hidden, head_weight, labels, lse, valid = ctx.saved_tensors
+        dim = hidden.shape[-1]
+        vocab = head_weight.shape[0]
+        flat = hidden.reshape(-1, dim)
+        grad_hidden = torch.zeros_like(hidden)
+        grad_flat = grad_hidden.view(-1, dim)
+        if valid.numel():
+            weight = head_weight.to(ctx.compute)
+            with torch.autocast("cuda", enabled=False):
+                for start in range(0, valid.numel(), ctx.chunk_rows):
+                    index = valid[start:start + ctx.chunk_rows]
+                    logits = flat[index].to(ctx.compute) @ weight.t()
+                    targets = labels[index].contiguous()
+                    norms = lse[index].contiguous()
+                    with torch.cuda.device(hidden.device):
+                        chunk_scaled_grad_kernel[(index.numel(), triton.cdiv(vocab, 4096))](
+                            logits, targets, norms, grad_loss, vocab, ctx.denom, 4096,
+                            num_warps=4, enable_fp_fusion=False)
+                    # Loss scale is applied BEFORE rounding dZ to FP16/GEMM.
+                    grad_flat[index] = (logits @ weight).to(hidden.dtype)
+                    del logits
+        return grad_hidden, None, None, None, None, None
 
 
 def chunked_head_loss(
@@ -148,7 +138,9 @@ def chunked_head_loss(
         raise ValueError(f"chunk_size must be a positive integer, got {chunk_size!r}")
 
     target = shift_labels if shift_labels is not None else shift_for_next_token(labels, ignore_index)
-    target = target.to(hidden.device)
+    target = target.to(hidden.device).contiguous()
+    if target.shape != hidden.shape[:2]:
+        raise ValueError("target shape must match hidden batch/sequence dimensions")
 
     labelled = (target != ignore_index).sum()
     if num_items_in_batch is None:
@@ -160,6 +152,12 @@ def chunked_head_loss(
 
     with_grad = torch.is_grad_enabled() and hidden.requires_grad
     head_weight = lm_head.weight
+    if head_weight.requires_grad:
+        raise ValueError("chunked loss requires a frozen lm_head")
+    if getattr(lm_head, "bias", None) is not None:
+        raise ValueError("chunked loss currently requires a bias-free lm_head")
+    if head_weight.ndim != 2 or head_weight.shape[1] != hidden.shape[-1]:
+        raise ValueError("head shape must match hidden dimension")
 
     loss, token_entropy, token_loss, correct = _ChunkedHeadLossFunction.apply(
         hidden, head_weight, target, chunk_size, denom, with_grad

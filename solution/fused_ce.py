@@ -20,7 +20,7 @@ import triton.language as tl
 @triton.jit
 def fused_ce_kernel(
     Logits, Targets,
-    Loss, Entropy, Hits, Grad,
+    Loss, Entropy, Hits, Grad, LSE,
     stride_lz, stride_lv,
     stride_gz, stride_gv,
     V: tl.constexpr,
@@ -28,6 +28,7 @@ def fused_ce_kernel(
     denom: float,
     HAS_GRAD: tl.constexpr,
     INPLACE_GRAD: tl.constexpr,
+    SAVE_LSE: tl.constexpr,
 ):
     row = tl.program_id(0)
     target = tl.load(Targets + row).to(tl.int64)
@@ -68,10 +69,13 @@ def fused_ce_kernel(
 
         s_old = s
         s = s_old * alpha_old + cur_s * alpha_cur
-        t = alpha_old * (t + s_old * (m - new_m)) + alpha_cur * (cur_t + cur_s * (cur_m - new_m))
+        old_delta = tl.where(s_old > 0, m - new_m, 0.0)
+        t = alpha_old * (t + s_old * old_delta) + alpha_cur * (cur_t + cur_s * (cur_m - new_m))
         m = new_m
 
     lse = m + tl.log(s)
+    if SAVE_LSE:
+        tl.store(LSE + row, lse)
     # Entropy: H = log(s) - t / s (in nats)
     entropy_val = tl.log(s) - t / s
     tl.store(Entropy + row, entropy_val)
@@ -81,7 +85,7 @@ def fused_ce_kernel(
         target_ptr = Logits + row * stride_lz + target * stride_lv
         target_logit = tl.load(target_ptr).to(tl.float32)
         loss_val = lse - target_logit
-        is_hit = (best_idx == target)
+        is_hit = (best_idx == target).to(tl.int32)
     else:
         loss_val = 0.0
         is_hit = 0
@@ -113,7 +117,7 @@ def fused_ce_kernel(
             else:
                 ptr_out = Grad + row * stride_gz + cols * stride_gv
 
-            tl.store(ptr_out, grad_val.to(Logits.dtype.element_ty), mask=mask)
+            tl.store(ptr_out, grad_val.to(Grad.dtype.element_ty), mask=mask)
 
 
 def fused_cross_entropy(
@@ -124,6 +128,7 @@ def fused_cross_entropy(
     inplace_grad: bool = True,
     grad_out: Optional[torch.Tensor] = None,
     block_size: int = 4096,
+    lse_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Runs fused cross-entropy + metrics + gradient.
 
@@ -172,7 +177,7 @@ def fused_cross_entropy(
     with torch.cuda.device(logits.device):
         fused_ce_kernel[(n_rows,)](
             logits, targets,
-            loss, entropy, hits, grad,
+            loss, entropy, hits, grad, lse_out if lse_out is not None else loss,
             logits.stride(0), logits.stride(1),
             grad.stride(0), grad.stride(1),
             V=vocab_size,
@@ -180,6 +185,7 @@ def fused_cross_entropy(
             denom=float(denom),
             HAS_GRAD=bool(needs_grad),
             INPLACE_GRAD=bool(inplace_grad and needs_grad),
+            SAVE_LSE=lse_out is not None,
             num_warps=num_warps,
         )
 

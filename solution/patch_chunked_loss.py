@@ -60,6 +60,8 @@ class _OwnChunkedHeadLossHook:
                 f"{type(causal_lm).__name__} has no output embeddings "
                 "(get_output_embeddings returned None)."
             )
+        if getattr(head, "bias", None) is not None:
+            raise ValueError("chunked head loss requires a bias-free output projection")
         # Qwen2.5 has no soft-cap; bail early if the model does.
         cap = getattr(getattr(causal_lm, "config", None), "final_logit_softcapping", None)
         if cap is not None:
@@ -163,6 +165,12 @@ def _make_own_chunked_trainer_class(base_cls: type) -> type:
     from transformers import Trainer
 
     class OwnChunkedLossTrainer(base_cls):  # type: ignore[misc,valid-type]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            model = getattr(self, "model", None)
+            if callable(getattr(model, "get_output_embeddings", None)) or callable(getattr(model, "get_base_model", None)):
+                attach_hook(model, self, chunk_size=getattr(type(self), "_chunk_size", _DEFAULT_CHUNK))
+
         def compute_loss(
             self,
             model: Any,

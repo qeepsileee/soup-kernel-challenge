@@ -64,7 +64,7 @@ def ce_merge_stats_kernel(Z, Target, Stats, Loss, Entropy, Hits, LSE, Max, LogSu
 def ce_write_grad_kernel(Z, Target, Max, LogSum, Grad, Upstream,
                          V: tl.constexpr, Z0: tl.constexpr, Z1: tl.constexpr,
                          G0: tl.constexpr, G1: tl.constexpr,
-                         DENOM: tl.constexpr, SCALED: tl.constexpr, T: tl.constexpr):
+                         DENOM, SCALED: tl.constexpr, T: tl.constexpr):
     row = tl.program_id(0)
     col = tl.program_id(1) * T + tl.arange(0, T)
     z = tl.load(Z + row * Z0 + col * Z1, mask=col < V, other=-float('inf')).to(tl.float32)

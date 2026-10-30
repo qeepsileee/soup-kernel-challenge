@@ -91,25 +91,65 @@ class ChunkedLossTests(unittest.TestCase):
                 self.assertEqual(int(step.correct.item()), int(ref_hits.item()))
 
     def test_amp_loss_scaler_consistency(self):
-        """Validates that varying grad_loss scale produces strictly proportional gradients."""
+        """Compare real autograd at each scale; do not assume FP16 rounding commutes."""
         import torch
         import torch.nn as nn
         from solution.chunked_loss import chunked_head_loss
 
         b, t, d, v = 2, 32, 64, 512
         lm_head = nn.Linear(d, v, bias=False, device="cuda", dtype=torch.float16)
+        lm_head.weight.requires_grad_(False)
         labels = torch.randint(0, v, (b, t), device="cuda", dtype=torch.long)
 
-        h1 = torch.randn((b, t, d), device="cuda", dtype=torch.float16, requires_grad=True)
-        h2 = h1.detach().clone().requires_grad_(True)
+        values = torch.randn((b, t, d), device="cuda", dtype=torch.float16)
+        for scale in (1., 1024., 65536.):
+            with self.subTest(scale=scale):
+                h1 = values.detach().clone().requires_grad_(True)
+                h2 = values.detach().clone().requires_grad_(True)
+                logits = lm_head(h1)[:, :-1].float()
+                ref_loss = torch.nn.functional.cross_entropy(
+                    logits.reshape(-1, v), labels[:, 1:].reshape(-1))
+                loss, _ = chunked_head_loss(h2, lm_head, labels, chunk_size=16)
+                ref_grad, = torch.autograd.grad(ref_loss * scale, h1)
+                actual_grad, = torch.autograd.grad(loss * scale, h2)
+                torch.testing.assert_close(actual_grad, ref_grad, rtol=3e-3, atol=1e-2)
 
-        loss1, _ = chunked_head_loss(h1, lm_head, labels, chunk_size=16)
-        loss2, _ = chunked_head_loss(h2, lm_head, labels, chunk_size=16)
+    def test_full_vocab_amp_with_fp32_frozen_head(self):
+        import torch
+        from solution.chunked_loss import chunked_head_loss
+        head = torch.nn.Linear(64, 151936, bias=False, device="cuda", dtype=torch.float32)
+        head.weight.requires_grad_(False)
+        values = torch.randn((2, 8, 64), device="cuda", dtype=torch.float32)
+        labels = torch.randint(151936, (2, 8), device="cuda")
+        labels[:, :4] = -100
+        a = values.detach().clone().requires_grad_(True)
+        b = values.detach().clone().requires_grad_(True)
+        with torch.autocast("cuda", dtype=torch.float16):
+            logits = head(a)
+            ref = torch.nn.functional.cross_entropy(logits[:, :-1].float().reshape(-1, 151936),
+                                                    labels[:, 1:].reshape(-1))
+            loss, step = chunked_head_loss(b, head, labels, chunk_size=3)
+        ga, = torch.autograd.grad(ref * 1024., a)
+        gb, = torch.autograd.grad(loss * 1024., b)
+        torch.testing.assert_close(loss, ref, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(gb, ga, rtol=3e-3, atol=1e-2)
+        self.assertTrue(torch.all(gb[:, :3] == 0))
+        self.assertTrue(torch.all(torch.isfinite(step.token_entropy)))
 
-        (g1,) = torch.autograd.grad(loss1 * 1.0, h1)
-        (g2,) = torch.autograd.grad(loss2 * 65536.0, h2)
-
-        torch.testing.assert_close(g1 * 65536.0, g2, rtol=1e-4, atol=1e-3)
+    def test_trainable_head_rejected_and_all_ignore_backward_zero(self):
+        import torch
+        from solution.chunked_loss import chunked_head_loss
+        head = torch.nn.Linear(16, 64, bias=False, device="cuda", dtype=torch.float16)
+        x = torch.randn((2, 4, 16), device="cuda", dtype=torch.float16, requires_grad=True)
+        labels = torch.full((2, 4), -100, device="cuda", dtype=torch.long)
+        with self.assertRaises(ValueError):
+            chunked_head_loss(x, head, labels)
+        head.weight.requires_grad_(False)
+        loss, step = chunked_head_loss(x, head, labels)
+        loss.backward()
+        self.assertEqual(loss.item(), 0.)
+        self.assertTrue(torch.all(x.grad == 0))
+        self.assertTrue(torch.all(step.token_entropy > 0))
 
 
 if __name__ == "__main__":
