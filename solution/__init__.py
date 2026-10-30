@@ -21,6 +21,7 @@ def apply():
     from .entropy import patch_entropy
     from .mlp_bridge import patch_mlp_bridge
     from .lora_fusion import patch_lora
+    from .patch_chunked_loss import patch_chunked_loss
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
     patch_dequantize()  # participant 3: validated NF4 decoder; retain bnb matmul
@@ -29,5 +30,6 @@ def apply():
     patch_entropy()  # memory-light metric; coordinate with participant 1
     patch_mlp_bridge()  # avoid widening/narrowing frozen MLP activations
     patch_lora()  # selective: wide q-like projections with >=2048 token rows
+    patch_chunked_loss()  # fused Triton CE: eliminates full [B,T,V] logits tensor
     # Both custom dX GEMM experiments regressed on T4. Keep them opt-in via
     # bench_nf4 flags, never activate them in the normal training entry point.
