@@ -54,9 +54,9 @@ class LoRAFusionTests(unittest.TestCase):
         from solution.lora_fusion import patch_lora, unpatch_lora
         unpatch_lora()
         original = Linear4bit.forward
-        patch_lora()
+        patch_lora(policy="all")
         patched = Linear4bit.forward
-        patch_lora()
+        patch_lora(policy="all")
         self.assertIs(patched, Linear4bit.forward)
         try:
             for out in (256, 1536):
@@ -91,6 +91,32 @@ class LoRAFusionTests(unittest.TestCase):
                 layer.enable_adapters(False)
                 x = torch.randn((2, 17, 1536), device="cuda")
                 torch.testing.assert_close(patched(layer, x), original(layer, x), rtol=0, atol=0)
+        finally:
+            unpatch_lora()
+
+    def test_selective_dispatch_and_forward(self):
+        import torch
+        from unittest.mock import patch
+        from peft.tuners.lora.bnb import Linear4bit
+        from solution.lora_fusion import LoRAAdd, patch_lora, unpatch_lora
+        unpatch_lora()
+        original = Linear4bit.forward
+        patch_lora()
+        try:
+            for out, tokens, expected_calls in ((256, 2048, 0), (1536, 512, 0),
+                                                 (1536, 2048, 1)):
+                with self.subTest(out=out, tokens=tokens):
+                    layer = make_lora_layer(out)
+                    x = torch.randn((tokens, 1536), device="cuda")
+                    torch.cuda.manual_seed_all(444)
+                    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
+                        ref = original(layer, x)
+                    torch.cuda.manual_seed_all(444)
+                    with patch.object(LoRAAdd, "apply", wraps=LoRAAdd.apply) as spy:
+                        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
+                            actual = layer(x)
+                        self.assertEqual(spy.call_count, expected_calls)
+                    torch.testing.assert_close(actual, ref, rtol=0, atol=0)
         finally:
             unpatch_lora()
 

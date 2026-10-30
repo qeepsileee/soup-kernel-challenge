@@ -59,15 +59,24 @@ class LoRAAdd(torch.autograd.Function):
         return dbase, dadapter, None, None
 
 
-def patch_lora():
+def patch_lora(*, policy="selective"):
+    if policy not in ("selective", "all"):
+        raise ValueError("policy must be selective or all")
     if version("peft") != "0.20.0":
         return
     from peft.tuners.lora.bnb import Linear4bit
     original = Linear4bit.forward
     if getattr(original, "_own_lora_epilogue", False):
+        if original._lora_policy != policy:
+            raise RuntimeError("unpatch_lora() before switching policies")
         return
 
     def forward(self, x, *args, **kwargs):
+        # T4 measurements: small q and all v geometries regressed. Select only
+        # full-width q-like layers with >=2048 rows; same choice in every context.
+        if policy == "selective" and (x.ndim < 1 or x.shape[-1] != 1536
+                or self.out_features != 1536 or x.numel() // 1536 < 2048):
+            return original(self, x, *args, **kwargs)
         # Narrow, one-adapter rank-16 path; preserve all PEFT variants via fallback.
         if (args or kwargs or not x.is_cuda or x.numel() == 0
                 or x.dtype not in (torch.float16, torch.float32)
@@ -91,6 +100,7 @@ def patch_lora():
         return LoRAAdd.apply(base, adapter, self.scaling[key], convert)
 
     forward._own_lora_epilogue = True
+    forward._lora_policy = policy
     forward._original = original
     Linear4bit.forward = forward
 

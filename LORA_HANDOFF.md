@@ -24,6 +24,38 @@ other ranks/dtypes and non-CUDA use the original PEFT forward.
 Status: Python syntax checked locally; GPU tests are SKIPPED on this Mac (no
 CUDA/torch/Triton). No speed, memory or training-quality improvement claimed yet.
 
+## First T4 feedback and selective candidate
+
+At 73e05ee both LoRA tests PASSED on T4 (real PEFT x/A/B gradients, AMP and
+dropout RNG included). One-pass layer measurements:
+
+| tokens | out | no AMP speedup | AMP speedup |
+|---|---:|---:|---:|
+| 512 | 256 | 0.952x | 0.932x |
+| 512 | 1536 | 0.943x | 0.934x |
+| 2048 | 256 | 0.978x | 0.749x |
+| 2048 | 1536 | 1.238x | 1.110x |
+
+Do not enable the all-shape candidate in training. Default patch_lora() now
+selects only in=1536, out=1536, row_count>=2048; small q/v use the exact original
+forward. This is static geometry specialization, independent of profiling,
+measurement, tests, data values, seed or hidden rows. The all policy remains
+available explicitly for correctness tests/comparison. Selection itself needs
+GPU validation. apply() STILL DOES NOT enable LoRA; no unvalidated LoRA behavior
+is introduced into the shared training entry point.
+
+The revised benchmark alternates order across >=2 rounds (4 default), reports
+median times and individual paired ratios. Use it to confirm the promising
+geometry; one noisy sample is not sufficient. Check compile-inclusive official
+wall time before accepting: potential gains on a subset of steps may be smaller
+than additional cold JIT cost. No end-to-end benefit has been measured yet.
+
+```bash
+python -m pytest solution/test_lora_fusion.py -q
+python -m solution.bench_lora --tokens 2048 --out-features 1536 --rounds 4
+python -m solution.bench_lora --tokens 512 --out-features 1536 --rounds 4
+```
+
 Kaggle, isolated from teammate tests that may still be under development:
 
 ```bash
