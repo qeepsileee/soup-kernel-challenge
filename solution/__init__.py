@@ -16,6 +16,8 @@ The rules in short (the README and the task statement have the full ones):
 def apply():
     from .swiglu import patch_qwen2_mlp
     from .nf4 import patch_dequantize
+    from .nf4_matmul import patch_input_grad
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
     patch_dequantize()  # participant 3: candidate NF4 decoder, CUDA validation required
+    patch_input_grad()  # fused NF4 dX candidate: validate on T4 before full measurement

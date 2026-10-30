@@ -13,16 +13,20 @@ def main():
     import bitsandbytes.functional as functional
     import torch
     from .nf4 import dequantize_nf4, patch_dequantize, unpatch_dequantize
+    from .nf4_matmul import patch_input_grad, unpatch_input_grad
     from .nf4_format import qwen_projection_shapes
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--tokens", type=int, default=512)
+    parser.add_argument("--fused-dx", action="store_true",
+                        help="also benchmark candidate fused NF4 input-gradient kernel")
     args = parser.parse_args()
     if args.iterations < 1 or args.tokens < 1:
         parser.error("iterations and tokens must be positive")
     torch.manual_seed(31)
     unpatch_dequantize()
+    unpatch_input_grad()
     reference = functional.dequantize_4bit
 
     def time_ms(fn):
@@ -39,7 +43,7 @@ def main():
 
     result = {"gpu": torch.cuda.get_device_name(),
               "versions": {p: version(p) for p in ("torch", "triton", "bitsandbytes")},
-              "tokens": args.tokens, "layers": []}
+              "tokens": args.tokens, "fused_dx": args.fused_dx, "layers": []}
     for name, shape in qwen_projection_shapes().items():
         weight = torch.randn(shape, device="cuda", dtype=torch.float16)
         packed, state = functional.quantize_4bit(weight, quant_type="nf4", compress_statistics=True)
@@ -62,9 +66,12 @@ def main():
 
         base_step_ms = time_ms(step)
         patch_dequantize()
+        if args.fused_dx:
+            patch_input_grad()
         try:
             ours_step_ms = time_ms(step)
         finally:
+            unpatch_input_grad()
             unpatch_dequantize()
         result["layers"].append({"name": name, "shape_out_in": shape,
             "max_abs_error": max_error, "decode_base_ms": base_ms,

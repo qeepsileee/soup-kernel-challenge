@@ -1,8 +1,36 @@
 # Participant 3: NF4 and ввсеLoRA
 
-Status: first decoder candidate implemented, NOT CUDA-validated or benchmarked.
-The local machine is macOS without torch, Triton or a CUDA GPU. No speed or memory
-improvement has been measured. This is not a final hackathon submission.
+Status: first decoder validated on Kaggle by the user; first full run failed
+admission (coverage and idle-GPU checks). Second fused-dX candidate awaits CUDA
+validation. The local machine is macOS without torch, Triton or a CUDA GPU.
+This is not a final hackathon submission.
+
+UPDATE after user's first Kaggle run (2026-10-30): decoder candidate at 02fb461
+passed 12 GPU tests and 79 Soup tests. Full exploratory run: 117.8s/14449MiB
+base, 85.15s/12385MiB solution, eval losses 2.04968/2.04969. NOT an admitted
+result: own-kernel share is 1.7% (<5%); GPUs were not idle at baseline start
+(14345MiB). Time/memory also include the starter SwiGLU contribution. Do not
+attribute the total improvement to NF4 or treat these as clean official numbers.
+
+Second candidate adds nf4_matmul.py: tiled FP16 dY @ NF4-W with inline nested
+decode, so backward need not allocate full dense W. apply() enables it in addition
+to the first decoder. Frozen base weight/bias only; bnb version 0.50.2 only;
+unsupported paths use original backward. Forward and PEFT dropout stay unchanged.
+This candidate is NOT CUDA-tested yet. CPU checks do not compile Triton.
+
+Validate before full measurement:
+
+```bash
+python -m pytest solution -q
+python -m solution.bench_nf4 --fused-dx --tokens 512 --iterations 20 > runs/nf4_dx_512.json
+```
+
+Review forward_backward_speedup for regressions. Kernel contribution must come
+from useful dX computation; do not pad kernel time or repeat unused computations.
+Before an official run, stop all other GPU workloads, restart notebook session
+if its kernel retains CUDA allocations, and inspect nvidia-smi. Both GPUs must be
+idle according to the harness. Never kill arbitrary processes or alter harness
+allocator/timing settings. Then run --repeats 2 and check_rules.py.
 
 ## Changes to the proposed work plan
 
