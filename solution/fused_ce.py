@@ -110,7 +110,7 @@ def fused_ce_kernel(
                 is_tgt = (cols == target)
                 grad_val = (prob - tl.where(is_tgt, 1.0, 0.0)) * scale
             else:
-                grad_val = 0.0
+                grad_val = tl.full((BLOCK_SIZE,), 0.0, tl.float32)
 
             if INPLACE_GRAD:
                 ptr_out = ptr_in
