@@ -42,6 +42,25 @@ class FusedInputGradTests(unittest.TestCase):
                         actual = input_grad_nf4(g, packed, state)
                         torch.testing.assert_close(actual, expected, rtol=3e-3, atol=1e-2)
 
+    def test_dense_dx_all_shapes_and_tails(self):
+        import bitsandbytes.functional as functional
+        import torch
+        from solution.nf4_format import qwen_projection_shapes
+        from solution.nf4_matmul import input_grad_dense
+
+        for shape in sorted(set(qwen_projection_shapes().values()) | {(33, 65)}):
+            for nested in (False, True):
+                for dtype in (torch.float16, torch.float32):
+                    with self.subTest(shape=shape, nested=nested, dtype=dtype):
+                        w = torch.randn(shape, device="cuda", dtype=dtype)
+                        packed, state = functional.quantize_4bit(
+                            w, quant_type="nf4", compress_statistics=nested)
+                        g = torch.randn((2, shape[0], 17), device="cuda",
+                                        dtype=torch.float16).transpose(1, 2) * 2
+                        expected = g @ functional.dequantize_4bit(packed, state).to(g.dtype)
+                        torch.testing.assert_close(input_grad_dense(g, packed, state), expected,
+                                                   rtol=3e-3, atol=1e-2)
+
     def test_bnb_autograd_patch_with_lora_and_dropout(self):
         import bitsandbytes as bnb
         import bitsandbytes.functional as functional
@@ -72,6 +91,7 @@ class FusedInputGradTests(unittest.TestCase):
         reference = run(False)
         candidate = run(True)
         self.assertTrue(getattr(MatMul4Bit.backward, "_soup_fused_nf4_dx", False))
+        self.assertEqual(MatMul4Bit.backward._nf4_dx_mode, "decode_then_gemm")
         # Forward and LoRA parameter gradients are unchanged; only dX uses GEMM candidate.
         for i in (0, 2, 3):
             torch.testing.assert_close(candidate[i], reference[i], rtol=0, atol=0)

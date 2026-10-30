@@ -19,8 +19,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--tokens", type=int, default=512)
-    parser.add_argument("--fused-dx", action="store_true",
+    parser.add_argument("--summary", action="store_true", help="print a compact timing table")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--fused-dx", action="store_true",
                         help="also benchmark candidate fused NF4 input-gradient kernel")
+    group.add_argument("--dense-dx", action="store_true",
+                       help="benchmark decode-once + dense Triton input-gradient kernel")
     args = parser.parse_args()
     if args.iterations < 1 or args.tokens < 1:
         parser.error("iterations and tokens must be positive")
@@ -43,7 +47,8 @@ def main():
 
     result = {"gpu": torch.cuda.get_device_name(),
               "versions": {p: version(p) for p in ("torch", "triton", "bitsandbytes")},
-              "tokens": args.tokens, "fused_dx": args.fused_dx, "layers": []}
+              "tokens": args.tokens, "fused_dx": args.fused_dx,
+              "dense_dx": args.dense_dx, "layers": []}
     for name, shape in qwen_projection_shapes().items():
         weight = torch.randn(shape, device="cuda", dtype=torch.float16)
         packed, state = functional.quantize_4bit(weight, quant_type="nf4", compress_statistics=True)
@@ -66,8 +71,8 @@ def main():
 
         base_step_ms = time_ms(step)
         patch_dequantize()
-        if args.fused_dx:
-            patch_input_grad()
+        if args.fused_dx or args.dense_dx:
+            patch_input_grad(fused=args.fused_dx)
         try:
             ours_step_ms = time_ms(step)
         finally:
@@ -82,7 +87,15 @@ def main():
             "quant_state": {"blocksize": state.blocksize, "dtype": str(state.dtype),
                 "nested": state.nested, "scale_blocksize": state.state2.blocksize,
                 "packed_shape": list(packed.shape), "scales_shape": list(state.absmax.shape)}})
-    print(json.dumps(result, indent=2))
+    if args.summary:
+        print(f"{result['gpu']}, tokens={args.tokens}, dense_dx={args.dense_dx}, fused_dx={args.fused_dx}")
+        for row in result["layers"]:
+            print(f"{row['name']:12s} base={row['forward_backward_base_ms']:.3f} ms "
+                  f"candidate={row['forward_backward_candidate_ms']:.3f} ms "
+                  f"speedup={row['forward_backward_speedup']:.3f}x "
+                  f"decode_error={row['max_abs_error']:.2g}")
+    else:
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

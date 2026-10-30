@@ -1,9 +1,35 @@
 # Participant 3: NF4 and ввсеLoRA
 
 Status: first decoder validated on Kaggle by the user; first full run failed
-admission (coverage and idle-GPU checks). Second fused-dX candidate awaits CUDA
-validation. The local machine is macOS without torch, Triton or a CUDA GPU.
+admission (coverage and idle-GPU checks). Inline-decode dX passed 14 GPU tests
+but was rejected for poor T4 performance. CURRENT default is decode-once + dense
+Triton GEMM candidate, awaiting CUDA validation. Local machine has no CUDA.
 This is not a final hackathon submission.
+
+## Current candidate: separate decoding and dense GEMM
+
+The user's 512-token microbenchmark at 5821ca4 showed inline-decode dX caused
+severe regressions: gate 1.044ms -> 24.183ms, up 1.030ms -> 24.514ms,
+down 1.087ms -> 23.491ms. Standalone decode was 1.11-1.81x faster, error 0.
+Avoid a full training run with that inline-decode candidate.
+
+Default patch_input_grad() now selects input_grad_dense(): decode W once with
+our decoder, then call our tiled dense GEMM, accumulating in FP32 with FP16
+inputs/output. Dense W is a temporary of this backward call; no persistent cache.
+This reintroduces the one-weight temporary but avoids redundant NF4 unpacking
+inside every GEMM tile/reduction. No performance or >=5% coverage claim yet.
+Experimental fused=True is only for reproduction of the rejected experiment.
+
+```bash
+python -m pytest solution -q
+python -m solution.bench_nf4 --dense-dx --tokens 512 --iterations 20 --summary
+```
+
+Only after correctness and acceptable speed, measure the full run with repeats
+and check rules. Consider keeping decoder-only if the team fusion/loss kernels
+already provide >=5% coverage and the dense GEMM is not beneficial overall.
+
+## History of earlier candidates
 
 UPDATE after user's first Kaggle run (2026-10-30): decoder candidate at 02fb461
 passed 12 GPU tests and 79 Soup tests. Full exploratory run: 117.8s/14449MiB

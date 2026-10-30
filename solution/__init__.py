@@ -20,4 +20,4 @@ def apply():
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
     patch_dequantize()  # participant 3: candidate NF4 decoder, CUDA validation required
-    patch_input_grad()  # fused NF4 dX candidate: validate on T4 before full measurement
+    patch_input_grad()  # decode once + dense Triton dX; CUDA validation required
