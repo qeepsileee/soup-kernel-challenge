@@ -1,5 +1,11 @@
 # Runtime extents instead of compile-time tensor sizes
 
+UPDATE: 2f7e59c passed all 45 solution tests on T4. Variant diagnostic confirmed
+one NF4 binary across three matrices and one binary per compressed activation
+direction across seq=64/256/512. Official repeated run passed all ten checks:
+79.2s base / 71.8s solution, 14345MiB / 5363MiB, eval +0.001%, own share 8.0%,
+79 Soup tests passed. See VALIDATED_RESULTS.md for exact per-run numbers.
+
 Competitive target supplied by the user: beat 54.8 seconds and 4683MiB on the
 same Kaggle T4 fixed task, preserving every admission check. This is a target,
 not an achieved result. Last fully validated fallback: 983074d, 71.7s/6263MiB.

@@ -1,6 +1,38 @@
 # Validated public-data run on Kaggle T4
 
-## Latest validated candidate: chunked head + parallel CE
+## Latest validated candidate: INT8 activations with runtime extents
+
+Code tested: 2f7e59cd359d23245b34fd3244b3286f290010d3. Recorded 2026-10-31.
+Source: user's official Kaggle output; raw artifacts are in runs_int8_runtime/.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 77.08 | 14345 |
+| solution_1 | 71.92 | 5363 |
+| solution_2 | 71.62 | 5363 |
+| base_2 | 81.29 | 14345 |
+
+Means 79.185s / 71.77s; reported speedup 1.103x, about 9.4% less wall time.
+Memory ratio 2.675x, reduction 8982MiB (62.6%). Eval loss displayed as
+2.04963 / 2.04966 (+0.001%). Own kernels: 8.0%, lowest of two runs.
+ALL TEN CHECKS PASSED, 79 Soup tests passed. Preceding solution suite: 45 passed.
+INT8 saved activations imply approximate backward, but the public task's loss,
+metrics and eval-quality checks all passed; hidden-data review is still pending.
+
+Earlier INT8 code 5c67852 also passed all checks, but measured 81.56/81.09s
+solution vs 78.19/81.19s base, same 5363MiB peak (speed ratio 0.980x).
+Runtime-size reuse diagnostic at 2f7e59c confirmed one compiled training-format
+NF4 variant across three weight shapes and one compression forward/backward
+variant across seq lengths 64/256/512. The subsequent full run was about 9.6s
+faster than the earlier INT8 run; this cross-session difference is not an isolated
+on/off ablation of compilation cost.
+
+User-reported competitor target: 54.8s / 4683MiB. This candidate has NOT beaten
+those values; same-task/harness equivalence of competitor numbers is unverified.
+Remaining raw gap about 17s and 680MiB. Retain both this pin and 983074d as
+validated alternatives; score ratios across sessions have different baselines.
+
+## Prior validated candidate: chunked head + parallel CE
 
 Code tested: 983074da7f131839065723c821736e2d57a19c1d. Recorded: 2026-10-31
 (Asia/Almaty). Source: official harness console supplied by the Kaggle operator.
