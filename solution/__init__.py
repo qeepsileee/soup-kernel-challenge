@@ -16,8 +16,14 @@ The rules in short (the README and the task statement have the full ones):
 def apply():
     from .swiglu import patch_qwen2_mlp
     from .nf4 import patch_dequantize
+    from .nf4_linear import patch_linear
+    from .rmsnorm import patch_rmsnorm
+    from .entropy import patch_entropy
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
     patch_dequantize()  # participant 3: validated NF4 decoder; retain bnb matmul
+    patch_linear()  # decode in forward/backward, cuBLAS performs all matrix products
+    patch_rmsnorm()  # independent frozen-weight fusion; coordinate with participant 2
+    patch_entropy()  # memory-light metric; coordinate with participant 1
     # Both custom dX GEMM experiments regressed on T4. Keep them opt-in via
     # bench_nf4 flags, never activate them in the normal training entry point.

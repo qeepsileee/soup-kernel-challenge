@@ -1,10 +1,52 @@
 # Participant 3: NF4 and ввсеLoRA
 
-CURRENT STATUS: apply() enables ONLY the validated NF4 decoder plus the starter
-SwiGLU. Both custom dX GEMM experiments are DISABLED in training because they
-regressed in the user's T4 measurements. The dense candidate passed 15 tests,
-but q/o were ~3.5x slower and gate/up/down ~3.9-6.5x slower than baseline.
-The experimental kernels remain callable for reproducing the measurements.
+CURRENT CANDIDATE (awaits GPU validation): own NF4 decode in forward/backward
+with cuBLAS GEMM, frozen-weight RMSNorm forward/backward, two-pass entropy, plus
+the starter SwiGLU. Both custom dX GEMM experiments remain DISABLED in training.
+The previous decoder-only stable checkpoint is 7f64150. New candidate correctness,
+speed, memory and >=5% coverage must be measured, not inferred.
+
+Root cause of the slow GEMM experiments: Triton 3.6.0's BlockedToMMA pass rejects
+compute capability <80 and falls back to FMA. T4 is SM75. Thus ordinary tl.dot
+in these experiments did not use tensor cores. Do not tune their tile sizes as
+if this were an Ampere tensor-core kernel. Keep GEMMs in torch/cuBLAS.
+Primary compiler source (lines 344-350):
+https://github.com/triton-lang/triton/blob/v3.6.0/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
+
+New module ownership for team integration: nf4_linear.py is participant 3;
+rmsnorm.py is a supplemental implementation to coordinate with participant 2;
+entropy.py is a supplemental metric optimization to coordinate with participant 1.
+Do not apply two competing patches to the same function.
+
+RMSNorm preserves the normalized-value cast before multiplying the frozen norm
+weight, the promoted output dtype and gradient rounding through the cast.
+Entropy computes each token's entropy, using local max/exp sum/shifted moment
+and a stable merge; the original trainer still applies its attention mask and
+logging. FP32 contiguous, no-grad logits only; differentiable/other-dtype uses
+the original TRL implementation. No truncation, approximation by sampling, or
+omission of prompt-token entropy. The full logits tensor still exists: this is
+NOT a claim of eliminating all logits memory. NF4 linear has one dense temporary
+per call and saves only packed W for backward, with no trainable base parameters.
+
+```bash
+python -m pytest solution -q
+python -m solution.bench_candidate --tokens 512
+python -m solution.bench_candidate --tokens 2048
+```
+
+Tests cover new NF4 forward/backward with bias and scaled upstream gradients,
+norm dtype promotion/rounding and backward, entropy for uniform/high-offset/
+sharp distributions, vocabulary tails and the full 151936 vocabulary. This is
+in addition to the existing NF4 tests. Local syntax/CPU checks cannot validate
+CUDA compilation or performance. If these pass with acceptable microbenchmarks,
+run the unmodified harness twice per side and all rule checks on idle GPUs.
+
+Algorithm references only, independently written kernels:
+- RMSNorm: https://arxiv.org/abs/1910.07467
+- Qwen semantics: https://github.com/huggingface/transformers/blob/v5.16.1/src/transformers/models/qwen2/modeling_qwen2.py
+- TRL entropy semantics: https://github.com/huggingface/trl/blob/v0.29.1/trl/trainer/utils.py
+
+## Prior decoder-only result
 
 Decoder-only own-kernel coverage was 1.7% in the initial full run, so this module
 alone does NOT meet the 5% admission gate. Team Loss/Fusion kernels are not yet
