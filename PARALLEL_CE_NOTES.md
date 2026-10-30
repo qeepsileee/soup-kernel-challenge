@@ -6,6 +6,19 @@ test_parallel_ce.py and bench_parallel_ce.py. Existing locally modified
 chunked_loss.py, fused_ce.py and patch_chunked_loss.py belong to participant 1
 and were left intact. The previous validated fallback is 8ff20b2.
 
+UPDATE: user ran 97f0985 on Kaggle T4: all FOUR parallel CE tests PASSED.
+Timing then failed while compiling the serial reference in participant 1's
+fused_ce.py: is_hit was int1 in the labelled branch and int32 in the other.
+This is not a parallel candidate failure. bench_parallel_ce now supports
+--baseline pytorch to bypass the broken comparison, --baseline serial to fail
+strictly on serial issues, or auto to explicitly exclude serial on compiler or
+numerical comparison failures. Candidate comparisons against PyTorch are always
+strict and never swallowed. Unrelated runtime errors still propagate.
+
+```bash
+python -m solution.bench_parallel_ce --iterations 20 --baseline pytorch
+```
+
 ## Why this direction
 
 The validated profile showed expensive full-vocabulary copies and lm_head casts.

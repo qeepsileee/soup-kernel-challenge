@@ -6,10 +6,12 @@ from statistics import median
 
 def main():
     import torch
+    from triton.compiler.errors import CompilationError
     from .parallel_ce import parallel_cross_entropy
     from .fused_ce import fused_cross_entropy
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--baseline", choices=("auto", "pytorch", "serial"), default="auto")
     args = parser.parse_args()
     if args.iterations < 1:
         parser.error("iterations must be positive")
@@ -36,12 +38,19 @@ def main():
             actual = run(parallel_cross_entropy)
             for i in (0, 1, 2, 3):
                 torch.testing.assert_close(actual[i], ref[i], rtol=3e-5, atol=3e-5)
-            serial = run(fused_cross_entropy)
-            baseline_fn = fused_cross_entropy
-            label = "serial"
-            if not torch.all(torch.isfinite(serial[1])):
-                print("Serial CE entropy is nonfinite; using PyTorch reference for timing.", flush=True)
-                baseline_fn, label = torch_reference, "PyTorch"
+            baseline_fn, label = torch_reference, "PyTorch"
+            if args.baseline != "pytorch":
+                try:
+                    serial = run(fused_cross_entropy)
+                    for i in (0, 1, 2, 3):
+                        torch.testing.assert_close(serial[i], ref[i], rtol=3e-5, atol=3e-5)
+                except (CompilationError, AssertionError) as exc:
+                    if args.baseline == "serial":
+                        raise
+                    print(f"Serial CE excluded ({type(exc).__name__}); "
+                          "timing against validated PyTorch reference instead.", flush=True)
+                else:
+                    baseline_fn, label = fused_cross_entropy, "serial"
 
             def measure(fn):
                 for _ in range(5):
