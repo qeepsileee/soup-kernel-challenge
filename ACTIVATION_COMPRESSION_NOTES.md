@@ -1,8 +1,30 @@
 # Opt-in INT8 saved-activation candidate
 
 Validated fallback: 983074d (1.173x full-command speedup, 6263MiB peak, all checks
-passed on public rows). This new experiment is NOT enabled by solution.apply().
-No claimed end-to-end improvement until official GPU validation.
+passed on public rows). After the GPU feedback below, this experimental commit
+enables compression in apply() for FULL VALIDATION. It is not yet a validated
+replacement for 983074d. Do not claim an end-to-end improvement before evaluation.
+
+## T4 feedback at 46dfaaf
+
+Three tests passed: compressed activation forward/backward/tails/storage tests
+and the existing MLP bridge regression. Full-layer microbenchmark at 2048 tokens:
+baseline 18.004ms vs compressed 18.047ms, speedup 0.998x, paired ratios
+1.105/0.993/0.993/0.994. Incremental per-layer PyTorch allocated peak increased
+189.0->221.9MiB. Resident allocated after forward decreased 83.0->49.2MiB.
+These measurements do NOT establish the whole-model peak or adapter quality.
+
+Next, on idle T4, test and run official repeated comparison in a separate folder:
+
+```bash
+python -m pytest solution -q
+python task/prepare_data.py
+python harness/run_task.py --repeats 2 --out runs_int8_activations
+python harness/check_rules.py --result runs_int8_activations/result.json
+```
+
+If loss/quality/output checks fail, or the combined time/memory tradeoff is poor,
+remove the patch_compressed_mlp() call, retaining 983074d as the validated result.
 
 ## Hypothesis and implementation
 
