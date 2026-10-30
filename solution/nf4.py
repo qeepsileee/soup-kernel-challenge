@@ -14,7 +14,7 @@ import triton.language as tl
 
 @triton.jit
 def nf4_decode_kernel(Packed, Absmax, Code, ScaleCode, ScaleAbsmax, Offset,
-                      Output, N: tl.constexpr, Q_BLOCK: tl.constexpr,
+                      Output, N, Q_BLOCK: tl.constexpr,
                       NESTED: tl.constexpr, SCALE_BLOCK: tl.constexpr,
                       TILE: tl.constexpr):
     i = tl.program_id(0) * TILE + tl.arange(0, TILE)

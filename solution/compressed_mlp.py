@@ -11,7 +11,7 @@ import triton.language as tl
 
 @triton.jit
 def example_compressed_swiglu_fwd(G, U, Y, QG, QU, SG, SU,
-                                 N: tl.constexpr, TILE: tl.constexpr, GROUP: tl.constexpr):
+                                 N, TILE: tl.constexpr, GROUP: tl.constexpr):
     groups = tl.program_id(0) * (TILE // GROUP) + tl.arange(0, TILE // GROUP)
     i = groups[:, None] * GROUP + tl.arange(0, GROUP)[None, :]
     g = tl.load(G + i, mask=i < N, other=0.).to(tl.float32)
@@ -33,7 +33,7 @@ def example_compressed_swiglu_fwd(G, U, Y, QG, QU, SG, SU,
 
 @triton.jit
 def example_compressed_swiglu_bwd(DY, QG, QU, SG, SU, DG, DU,
-                                 N: tl.constexpr, TILE: tl.constexpr, GROUP: tl.constexpr):
+                                 N, TILE: tl.constexpr, GROUP: tl.constexpr):
     i = tl.program_id(0) * TILE + tl.arange(0, TILE)
     g = tl.load(QG + i, mask=i < N, other=0).to(tl.float32)
     u = tl.load(QU + i, mask=i < N, other=0).to(tl.float32)

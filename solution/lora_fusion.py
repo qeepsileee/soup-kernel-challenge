@@ -11,7 +11,7 @@ import triton.language as tl
 
 
 @triton.jit
-def lora_add_kernel(Base, Adapter, Out, N: tl.constexpr, SCALE: tl.constexpr,
+def lora_add_kernel(Base, Adapter, Out, N, SCALE: tl.constexpr,
                     CAST_TO_BASE: tl.constexpr, BLOCK: tl.constexpr):
     i = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     b = tl.load(Base + i, mask=i < N, other=0).to(tl.float32)
@@ -23,7 +23,7 @@ def lora_add_kernel(Base, Adapter, Out, N: tl.constexpr, SCALE: tl.constexpr,
 
 
 @triton.jit
-def lora_adapter_grad_kernel(Grad, DAdapter, N: tl.constexpr,
+def lora_adapter_grad_kernel(Grad, DAdapter, N,
                              SCALE: tl.constexpr, BLOCK: tl.constexpr):
     i = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     # AddBackward/ToCopyBackward cast to adapter dtype before MulBackward.
