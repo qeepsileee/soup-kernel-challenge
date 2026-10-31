@@ -79,3 +79,14 @@ Use actual allocated memory and official nvidia-smi peaks instead.
 Local checks are AST/whitespace and CLI-independent CPU tests only; CUDA
 correctness, performance and full-task quality/admission have not been measured
 for this candidate. Preserve the validated fallback artifacts.
+
+## First T4 component results (d0c6c13)
+
+All five tests passed after restoring the pinned bitsandbytes dependency.
+Attention: 2.615 -> 2.708ms (0.966x), live allocations 18.59 -> 8.59MiB;
+incremental local peak 48.69 -> 50.69MiB. Dropout: .275 -> .507ms (0.542x),
+live allocations 9.00 -> 6.38MiB; incremental peak 15.00 -> 15.38MiB.
+These results verify the expected saved-data reductions and a real time cost.
+They do NOT demonstrate a faster whole command or a lower whole-model peak.
+Production apply() remains unchanged. A separate memory-oriented branch is
+needed for any full-task combination with the approximate NF4 activation codec.

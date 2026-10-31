@@ -4,6 +4,31 @@ from solution.cuda_test_support import GPU_AVAILABLE
 
 @unittest.skipUnless(GPU_AVAILABLE, "PyTorch + Triton + CUDA required")
 class NF4SavedMLPTests(unittest.TestCase):
+    def test_first_fp16_batch_uses_compressed_path(self):
+        import torch
+        from unittest.mock import patch
+        from transformers.models.qwen2.modeling_qwen2 import Qwen2MLP
+        from solution.test_paired_mlp import make_frozen_mlp
+        from solution.nf4_saved_mlp import NF4SavedSwiGLU, patch_nf4_saved_mlp, unpatch_nf4_saved_mlp
+        from solution.nf4_linear import patch_linear, unpatch_linear
+        module = make_frozen_mlp(64, 192)
+        for name in ("gate_proj", "up_proj", "down_proj"):
+            getattr(module, name).compute_type_is_set = False
+        x = torch.randn(2, 17, 64, device="cuda", dtype=torch.float16, requires_grad=True)
+        patch_linear()
+        patch_nf4_saved_mlp()
+        try:
+            with patch.object(NF4SavedSwiGLU, "apply", wraps=NF4SavedSwiGLU.apply) as codec:
+                out = Qwen2MLP.forward(module, x)
+            self.assertEqual(codec.call_count, 1)
+            self.assertTrue(all(getattr(module, name).compute_type_is_set
+                                for name in ("gate_proj", "up_proj", "down_proj")))
+            out.sum().backward()
+            self.assertTrue(torch.isfinite(x.grad).all())
+        finally:
+            unpatch_nf4_saved_mlp()
+            unpatch_linear()
+
     def test_exact_forward_and_measured_backward_error_and_storage(self):
         import torch
         from solution.compressed_mlp import CompressedSwiGLU

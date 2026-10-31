@@ -90,3 +90,45 @@ class NF4SavedSwiGLU(torch.autograd.Function):
                     grad.to(torch.float16).contiguous(), packed, sg, su, dg, du,
                     n, NF4_VALUES, 1024, 64, num_warps=4)
         return dg, du
+
+
+def patch_nf4_saved_mlp():
+    """Memory-trial opt-in. Production apply() does not call this function."""
+    import bitsandbytes as bnb
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2MLP
+    from .mlp_bridge import can_bridge, bridged_mlp
+    from .nf4 import supported
+    original = Qwen2MLP.forward
+    if getattr(original, "_nf4_saved_mlp", False):
+        return
+
+    def forward(self, x):
+        if (self.training and torch.is_grad_enabled() and x.is_cuda and x.dtype == torch.float16
+                and getattr(getattr(self, "config", None), "hidden_act", "silu") == "silu"):
+            layers = [getattr(self, name, None) for name in ("gate_proj", "up_proj", "down_proj")]
+            needs_init = any(not getattr(layer, "compute_type_is_set", False) for layer in layers)
+            if needs_init and all(isinstance(layer, bnb.nn.Linear4bit) and layer.compute_dtype == torch.float16
+                   and layer.bias is None and not layer.weight.requires_grad
+                   and layer.weight.device == x.device
+                   and supported(layer.weight, getattr(layer.weight, "quant_state", None))
+                   for layer in layers):
+                # The FP16 compute dtype is already configured. Initialize the
+                # internal readiness flags before checking can_bridge, so the
+                # first batch does not retain uncompressed gate/up tensors.
+                # This changes first-step saved-gradient compression as well,
+                # so the complete task still needs quality validation.
+                for layer in layers:
+                    layer.compute_type_is_set = True
+        if self.training and torch.is_grad_enabled() and can_bridge(self, x):
+            return bridged_mlp(self, x, activation=NF4SavedSwiGLU.apply)
+        return original(self, x)
+
+    forward._nf4_saved_mlp = True
+    forward._original = original
+    Qwen2MLP.forward = forward
+
+
+def unpatch_nf4_saved_mlp():
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2MLP
+    if getattr(Qwen2MLP.forward, "_nf4_saved_mlp", False):
+        Qwen2MLP.forward = Qwen2MLP.forward._original
