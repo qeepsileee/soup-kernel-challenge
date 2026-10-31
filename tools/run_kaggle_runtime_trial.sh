@@ -70,6 +70,11 @@ for experiment_var in ${!SOUP_EXPERIMENT_@}; do
     unset "$experiment_var"
 done
 
+if [[ "${1:-}" == "--prepare-only" ]]; then
+    printf '[environment] Ready; stopping before tests, diagnostics and measurement\n'
+    exit 0
+fi
+
 trial_out_dir="${1:-runs_runtime_trial}"
 if [[ -e "$trial_out_dir" ]]; then
     trial_out_dir="${trial_out_dir}_$(date -u +%Y%m%d_%H%M%S)"

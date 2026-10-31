@@ -1,4 +1,4 @@
-# Runtime trial: fa12d01 validated; RoPE broadcast follow-up pending
+# Runtime trial: RoPE validated; fa12d01 remains the best observed result
 
 Branch: intoxicated/runtime-trial. Parent functional pin:
 c6f6096a58c29ef319e6d7ad40cfac01a561d369, validated at 69.835s / 3279MiB
@@ -18,7 +18,16 @@ RoPE was not launched in every training run, despite its faster microbenchmark:
 the original strict shape guard rejected batch=1 positional embedding broadcast.
 Its component speedup is not evidence of an active whole-training RoPE speedup.
 
-## Follow-up: batch-broadcast RoPE, not yet CUDA/full-task validated
+## Follow-up: batch-broadcast RoPE validated, whole command did not improve
+
+Tested pin 96fd073d092c869db4f496676369d382308a50ea passed 79 solution tests,
+all ten official checks and 79 Soup regressions, including the dispatch audit.
+Both solution runs launched RoPE forward 3584 and backward 3520 times.
+Time was 72.75s / peak 3141MiB, paired base 88.72s / 14345MiB, speedup
+1.2195x, memory ratio 4.567x; eval +0.028% within tolerance. This is worse than
+the recorded fa12d01 67.44s / 3119MiB, which remains the preferred validated
+fallback. Cross-session variation prevents isolating the exact cost of RoPE.
+Do not promote a faster component benchmark into a whole-command speed claim.
 
 Qwen2Model's default position_ids are [1,T], so the rotary module returns
 cos/sin [1,T,128] shared across B examples. The previous guard required exactly
@@ -32,14 +41,30 @@ and otherwise preserves the validated math, layout guards and native fallback.
 New CUDA tests compare exact forward/backward for broadcast and mixed broadcast,
 and run a tiny real Qwen2Model with default position_ids, asserting own dispatch.
 The component benchmark now uses cos_batch=1 and verifies its geometry is eligible.
-These follow-up GPU tests are skipped locally on the Mac, not reported passed.
+These follow-up GPU tests were skipped locally but passed in the supplied T4 run.
 
 After the unchanged official checks, the standalone launcher also audits raw
 per-run triton_launches for rotary_forward_kernel and rotary_backward_kernel.
 This additional experiment check reads artifacts only and changes no official
 measurement or checks. It prevents crediting a microbenchmark optimization that
 did not actually run in every measured solution. Preserve fa12d01 as the current
-validated 67.44s / 3119MiB fallback until the new pin passes the complete run.
+validated 67.44s / 3119MiB fallback; a valid new pin is not automatically faster.
+
+To investigate cold compilation rather than repeating another full training
+unchanged, use the standalone diagnostic below. It observes actual compiled
+kernel variants across the variable sequence lengths and repeats T=512 at the
+end. The cache is private to THIS diagnostic process, never used to prewarm
+an official child. It does not alter production code, clocks or harness files.
+
+```bash
+bash tools/run_kaggle_runtime_trial.sh --prepare-only
+trial_cache="$(mktemp -d /kaggle/working/rope_diag.XXXXXX)"
+TRITON_CACHE_DIR="$trial_cache" python -u -m solution.bench_jit_reuse --rope-only
+```
+
+This reports first-use latency, not a score or pure compiler duration. Imports,
+input allocation and initial CUDA setup are outside its measured kernel region;
+the official measurement still includes all required startup/compilation costs.
 
 ## Changes
 

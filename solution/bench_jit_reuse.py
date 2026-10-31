@@ -4,6 +4,7 @@ Does not alter production code, compiler cache settings or official harness.
 Cold compilation must still be included in official whole-command measurements.
 """
 from contextlib import contextmanager
+import argparse
 import time
 
 
@@ -35,7 +36,51 @@ def observe(kernels):
                 kernel.run = previous
 
 
+def benchmark_rope():
+    import torch
+    from .rotary import Rotary, rotary_forward_kernel, rotary_backward_kernel, supported
+    if not torch.cuda.is_available():
+        raise RuntimeError("T4 required")
+    print(torch.cuda.get_device_name(), "RoPE compilation diagnostic; not a training score", flush=True)
+    print("Use a fresh standalone TRITON_CACHE_DIR for cold timings; official harness caches are untouched.",
+          flush=True)
+    kernels = [rotary_forward_kernel, rotary_backward_kernel]
+    lengths = (512, 430, 406, 382, 379, 371, 317, 316, 312, 295, 292, 279, 235, 512)
+    with observe(kernels) as variants:
+        for length in lengths:
+            q, k = [torch.randn(4, length, heads, 128, device="cuda", dtype=torch.float16)
+                    .transpose(1, 2).detach().requires_grad_(True) for heads in (12, 2)]
+            cos = torch.randn(1, length, 128, device="cuda", dtype=torch.float16)
+            sin = torch.randn_like(cos)
+            grads = [torch.randn_like(x) for x in (q, k)]
+            assert supported(q, k, cos, sin)
+            for layout in ("input-strides", "contiguous-grad"):
+                upstream = grads if layout == "input-strides" else [value.contiguous() for value in grads]
+                q.grad = k.grad = None
+                before = {name: len(keys) for name, keys in variants.items()}
+                torch.cuda.synchronize()
+                start = time.perf_counter()
+                outputs = Rotary.apply(q, k, cos, sin)
+                torch.autograd.backward(outputs, upstream)
+                torch.cuda.synchronize()
+                elapsed = time.perf_counter() - start
+                counts = {name: len(keys) for name, keys in variants.items()}
+                added = {name: counts[name] - before[name] for name in counts}
+                print(f"RoPE B=4 T={length} cos_batch=1 {layout}: {elapsed:.4f}s "
+                      f"compiled_variants={counts} new_variants={added}", flush=True)
+                del outputs, upstream
+            del q, k, cos, sin, grads
+    print("Diagnostic only. Cold startup and compilation still count in official measurements.", flush=True)
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--rope-only", action="store_true",
+                        help="inspect RoPE variants across real variable sequence lengths")
+    args = parser.parse_args()
+    if args.rope_only:
+        benchmark_rope()
+        return
     import torch
     import bitsandbytes.functional as functional
     from .nf4 import dequantize_nf4, nf4_decode_kernel
