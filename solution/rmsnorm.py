@@ -61,6 +61,14 @@ def patch_rmsnorm():
     if getattr(original, "_own_rmsnorm", False):
         return
 
+def unpatch_rmsnorm():
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
+
+    current = Qwen2RMSNorm.forward
+
+    if getattr(current, "_own_rmsnorm", False):
+        Qwen2RMSNorm.forward = current._original
+
     def forward(self, x):
         w = self.weight
         if (x.is_cuda and x.numel() > 0 and x.dtype in (torch.float16, torch.float32)
