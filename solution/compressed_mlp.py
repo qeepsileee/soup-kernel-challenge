@@ -1,4 +1,4 @@
-"""Opt-in block-INT8 saved-activation experiment. Not enabled by apply().
+"""Block-INT8 saved activations, enabled by the validated production apply().
 
 Forward SwiGLU is identical; only saved gate/up for backward are quantized.
 The activation formulas derive from the shipped example: these example_-named
