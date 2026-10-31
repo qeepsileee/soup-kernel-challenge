@@ -1,10 +1,22 @@
-# Runtime trial: CUDA and full-task validation pending
+# Runtime trial: fa12d01 passed public full-task validation
 
 Branch: intoxicated/runtime-trial. Parent functional pin:
 c6f6096a58c29ef319e6d7ad40cfac01a561d369, validated at 69.835s / 3279MiB
 with all ten public-task checks passed. Preserve that pin and its Kaggle outputs.
 The INT8 fallback remains 85b03db58bf420b39be9759a2b892807d2c37372.
-This branch has not established a faster or smaller official result yet.
+Tested pin: fa12d016036918faf37ef30a7a86f23e089b6be3, 67.44s / 3119MiB.
+All 75 solution tests, all ten official checks and 79 Soup regressions passed
+on the user's supplied Kaggle run. Eval loss +0.032% is within the +0.5% limit;
+the first-step/mean loss deviations are 0.04% / 0.06%. Own-kernel share is 9.8%.
+The paired base was 84.51s / 14345MiB, speedup 1.253x, memory ratio 4.599x.
+See VALIDATED_RESULTS.md; raw official JSON is still on Kaggle, not downloaded here.
+
+The peak is 160MiB below the parent. Cross-session absolute time is not an
+isolated causal estimate because the paired base also changed. The component
+shared-q/v path saves memory but regressed in time; retain that tradeoff explicitly.
+RoPE was not launched in every training run, despite its faster microbenchmark:
+the original strict shape guard rejected batch=1 positional embedding broadcast.
+Its component speedup is not evidence of an active whole-training RoPE speedup.
 
 ## Changes
 
@@ -70,9 +82,8 @@ Existing output directories are preserved by choosing a timestamped output name.
 The first supplied d481ed6 run used a fresh Kaggle session without bitsandbytes:
 40 tests passed, 31 were skipped and four integration tests stopped at the
 missing import. The full harness was not reached. These failures do not establish
-a numerical failure or full-task success. Restoring the pinned environment and
-rerunning the complete suite is required. The original CUDA-only component
-checks ran, but NF4/PEFT integration and full quality still remain unvalidated.
+a numerical failure or full-task success. The subsequent fa12d01 launcher
+restored the environment and all 75 tests/full checks passed as recorded above.
 
 The diagnostic benchmark compares against the parent's packed-mask dropout and
 native RoPE, not against an unoptimized solution. It alternates A/B order with

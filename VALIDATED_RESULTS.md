@@ -1,5 +1,48 @@
 # Validated public-data run on Kaggle T4
 
+## Runtime branch: fa12d01, 3119MiB, all ten public checks passed
+
+Branch: intoxicated/runtime-trial. Code tested:
+fa12d016036918faf37ef30a7a86f23e089b6be3, recorded 2026-10-31.
+Source: user's official Kaggle console output, runs_runtime_trial. The standalone
+launcher restored the pinned environment before measurement. No packages changed
+during the scored run; no experiment environment variables were required.
+
+| Run | Full time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 88.39 | 14345 |
+| solution_1 | 66.84 | 3119 |
+| solution_2 | 68.04 | 3119 |
+| base_2 | 80.63 | 14345 |
+
+Means: base 84.51s, solution 67.44s. Reported speedup 1.253x; memory ratio
+4.599x. Peak memory fell 11226MiB / 78.3% against this base, and another
+160MiB / 4.9% against the preceding 3279MiB candidate. The previous paired
+base was 88.16s, so the cross-session wall-time difference does not establish
+an isolated speed gain; normalized speedup is slightly lower than 1.262x.
+
+Eval loss 2.04966 -> 2.05031, +0.032% within +0.5%. First-step loss differs
+0.04%, mean 0.06%. Own-kernel share 9.8%, lowest of two runs. All 75 solution
+tests, all ten automatic checks and all 79 Soup regressions passed. Measurement
+was clean, task/outputs matched within tolerance and starter-derived MLP
+kernels remained excluded. Hidden data and final manual review remain open.
+
+RoPE kernels are listed as not launched in every measured run, so the 2.487x
+component RoPE result must NOT be credited as an active whole-task optimization
+at this pin. The strict guard rejected batch-broadcast positional embeddings;
+Qwen2's default position_ids have batch dimension 1. A follow-up must verify
+actual dispatch with the normal Qwen2Model path and measured launch counters.
+
+Component evidence at B=4,T=512: RoPE 1.528 -> 0.614ms; packed dropout adjoint
+0.455 -> 0.450ms (near noise); shared q/v adapters 2.092 -> 2.404ms (slower),
+with live allocation 20.02 -> 14.02MiB. At T=128 the q/v path was slower too,
+1.728 -> 2.264ms, with live allocation 5.12 -> 3.62MiB. Retain the memory
+tradeoff transparently; no isolated LoRA speedup is supported by these numbers.
+
+Preserve runs_runtime_trial/result.json, checks.json, per-run outputs and the
+saved notebook with the tested full SHA. They have not been independently
+downloaded into this repository. No sub-40s or sub-3000MiB result is established.
+
 ## Memory branch: c6f6096, 3279MiB, all ten public checks passed
 
 Branch: intoxicated/memory-trial. Code tested:
