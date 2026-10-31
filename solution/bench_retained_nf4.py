@@ -15,14 +15,17 @@ def main():
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--retain", choices=("0", "1", "kv"), default="1")
     parser.add_argument("--dx-layout", choices=("original", "transposed"), default="original")
+    parser.add_argument("--blas", choices=("original", "cublaslt"), default="original",
+                        help="diagnostic preference; precision settings remain unchanged")
     args = parser.parse_args()
     if min(args.tokens, args.iterations) < 1:
         parser.error("tokens and iterations must be positive")
     torch.manual_seed(914)
     print(torch.cuda.get_device_name(), "tokens=", args.tokens,
-          "retain=", args.retain, "dx-layout=", args.dx_layout)
+          "retain=", args.retain, "dx-layout=", args.dx_layout, "requested-blas=", args.blas)
     previous = os.environ.get("SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT")
     previous_layout = os.environ.get("SOUP_EXPERIMENT_NF4_DX_LAYOUT")
+    previous_blas = torch.backends.cuda.preferred_blas_library()
     try:
         for name, shape in qwen_projection_shapes().items():
             w = torch.randn(shape, device="cuda", dtype=torch.float16) * .02
@@ -31,13 +34,33 @@ def main():
             x = torch.randn(args.tokens, shape[1], device="cuda", dtype=torch.float16, requires_grad=True)
             grad = torch.randn(args.tokens, shape[0], device="cuda", dtype=torch.float16)
 
-            def step():
+            def step(collect=False):
                 x.grad = None
-                NF4Linear.apply(x, packed, None, state).backward(grad)
+                y = NF4Linear.apply(x, packed, None, state)
+                y.backward(grad)
+                if collect:
+                    return y.detach().clone(), x.grad.detach().clone()
 
-            def measure(candidate):
+            def configure(candidate):
                 os.environ["SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT"] = args.retain if candidate else "0"
                 os.environ["SOUP_EXPERIMENT_NF4_DX_LAYOUT"] = args.dx_layout if candidate else "original"
+                torch.backends.cuda.preferred_blas_library(
+                    "cublaslt" if candidate and args.blas == "cublaslt" else previous_blas)
+
+            if args.blas != "original":
+                configure(False)
+                reference = step(collect=True)
+                configure(True)
+                actual = step(collect=True)
+                for a, b in zip(actual, reference):
+                    torch.testing.assert_close(a, b, rtol=3e-3, atol=1e-2)
+                print(f"{name}: requested {args.blas}, numerical preflight passed; "
+                      f"max forward delta={(actual[0].float()-reference[0].float()).abs().max().item():.6g}",
+                      flush=True)
+                del reference, actual
+
+            def measure(candidate):
+                configure(candidate)
                 for _ in range(5):
                     step()
                 torch.cuda.synchronize()
@@ -67,6 +90,7 @@ def main():
             os.environ.pop("SOUP_EXPERIMENT_NF4_DX_LAYOUT", None)
         else:
             os.environ["SOUP_EXPERIMENT_NF4_DX_LAYOUT"] = previous_layout
+        torch.backends.cuda.preferred_blas_library(previous_blas)
     print("Layer timings omit simultaneous retention across the full model; use the official harness for peak memory.")
 
 
