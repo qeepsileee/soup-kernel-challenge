@@ -141,6 +141,12 @@ class _OwnChunkedHeadLossHook:
             )
 
         hidden_states = held[0]
+        import torch
+        attention_mask = kwargs.get("attention_mask")
+        if (not isinstance(attention_mask, torch.Tensor)
+                or attention_mask.shape != hidden_states.shape[:2]
+                or attention_mask.device != hidden_states.device):
+            attention_mask = None  # Unsupported layouts retain the full head path.
         loss, step = self._chunked_head_loss(
             hidden_states,
             self._head,
@@ -149,6 +155,7 @@ class _OwnChunkedHeadLossHook:
             num_items_in_batch=kwargs.get("num_items_in_batch"),
             shift_labels=kwargs.get("shift_labels"),
             precompute_grad=True,
+            attention_mask=attention_mask,
         )
         self.last_step = step
 

@@ -1,5 +1,96 @@
 # Validated public-data run on Kaggle T4
 
+This checkout is the unvalidated intoxicated/head-padding trial. Results below
+belong to their explicit historical pins; they are not new head-padding results.
+See HEAD_PADDING_TRIAL.md for this candidate and its required validation.
+
+## RoPE broadcast: validated 96fd073, no whole-run improvement
+
+Tested code: 96fd073d092c869db4f496676369d382308a50ea on
+intoxicated/runtime-trial. Source: user-supplied official Kaggle console output
+for runs_rope_broadcast, recorded 2026-10-31. All 79 solution tests, all ten
+automatic checks and all 79 Soup regressions passed. Normal task settings,
+outputs within tolerance, clean idle T4 measurement and unchanged packages passed.
+
+| Run | Full time (s) | Training loop (s) | Peak GPU memory (MiB) |
+|---|---:|---:|---:|
+| base_1 | 90.00 | 57.50 | 14345 |
+| solution_1 | 71.95 | 49.91 | 3141 |
+| solution_2 | 73.55 | 51.54 | 3141 |
+| base_2 | 87.44 | 65.88 | 14345 |
+
+Means: base 88.72s, solution 72.75s; reported speedup 1.2195x and memory
+ratio 4.567x. Eval loss 2.04966 -> 2.05023, +0.028% within +0.5%.
+Loss-curve first-step deviation 0.04%, mean 0.06--0.07%. Own kernels account
+for 9.7%, lowest of two runs, with starter-derived example_* kernels excluded.
+
+Dispatch is now confirmed in BOTH solution runs: 3584 rotary_forward_kernel
+and 3520 rotary_backward_kernel launches each. The additional artifact audit
+passed. The T=512 component RoPE benchmark measured 1.345 -> 0.652ms (2.064x),
+but that does not establish a whole-command speed improvement. Compared with
+the earlier fa12d01 result (67.44s / 3119MiB), this run took 5.31s more and
+22MiB more peak memory; normalized speedup also fell from 1.253x to 1.2195x.
+The sessions had different paired bases, so this is not an isolated causal
+estimate of RoPE's cost. Keep fa12d01 as the best observed combined result
+within the team's under-3500MiB target rather than replacing it with this pin.
+
+Startup evidence: solution apply_s 7.55 / 7.49s; time outside the loop
+22.04 / 22.01s; first two steps 7.2135 / 7.3471s, versus base 1.9669 / 1.9883s.
+apply_s overlaps outside_loop_s. The first-step gap is not a measurement of
+RoPE compilation alone. Median steady steps 0.6736 / 0.6956s versus base
+0.9110 / 1.0486s. One base run also had an unusually high outside-loop 32.50s,
+so raw cross-session wall-time attribution requires care.
+
+Shared-q/v component timing regressed again: T=512 1.738 -> 2.215ms, live
+allocation 20.02 -> 14.02MiB; T=128 1.760 -> 2.214ms, 5.12 -> 3.62MiB.
+This remains a memory/time tradeoff, not an isolated LoRA speedup.
+Preserve runs_rope_broadcast artifacts and the pinned saved notebook. Raw JSON
+has not been independently downloaded here. Hidden-data/manual review remains
+open. Neither a 40-second nor sub-3000MiB result is established.
+
+## Runtime branch: fa12d01, 3119MiB, all ten public checks passed
+
+Branch: intoxicated/runtime-trial. Code tested:
+fa12d016036918faf37ef30a7a86f23e089b6be3, recorded 2026-10-31.
+Source: user's official Kaggle console output, runs_runtime_trial. The standalone
+launcher restored the pinned environment before measurement. No packages changed
+during the scored run; no experiment environment variables were required.
+
+| Run | Full time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 88.39 | 14345 |
+| solution_1 | 66.84 | 3119 |
+| solution_2 | 68.04 | 3119 |
+| base_2 | 80.63 | 14345 |
+
+Means: base 84.51s, solution 67.44s. Reported speedup 1.253x; memory ratio
+4.599x. Peak memory fell 11226MiB / 78.3% against this base, and another
+160MiB / 4.9% against the preceding 3279MiB candidate. The previous paired
+base was 88.16s, so the cross-session wall-time difference does not establish
+an isolated speed gain; normalized speedup is slightly lower than 1.262x.
+
+Eval loss 2.04966 -> 2.05031, +0.032% within +0.5%. First-step loss differs
+0.04%, mean 0.06%. Own-kernel share 9.8%, lowest of two runs. All 75 solution
+tests, all ten automatic checks and all 79 Soup regressions passed. Measurement
+was clean, task/outputs matched within tolerance and starter-derived MLP
+kernels remained excluded. Hidden data and final manual review remain open.
+
+RoPE kernels are listed as not launched in every measured run, so the 2.487x
+component RoPE result must NOT be credited as an active whole-task optimization
+at this pin. The strict guard rejected batch-broadcast positional embeddings;
+Qwen2's default position_ids have batch dimension 1. A follow-up must verify
+actual dispatch with the normal Qwen2Model path and measured launch counters.
+
+Component evidence at B=4,T=512: RoPE 1.528 -> 0.614ms; packed dropout adjoint
+0.455 -> 0.450ms (near noise); shared q/v adapters 2.092 -> 2.404ms (slower),
+with live allocation 20.02 -> 14.02MiB. At T=128 the q/v path was slower too,
+1.728 -> 2.264ms, with live allocation 5.12 -> 3.62MiB. Retain the memory
+tradeoff transparently; no isolated LoRA speedup is supported by these numbers.
+
+Preserve runs_runtime_trial/result.json, checks.json, per-run outputs and the
+saved notebook with the tested full SHA. They have not been independently
+downloaded into this repository. No sub-40s or sub-3000MiB result is established.
+
 ## Memory branch: c6f6096, 3279MiB, all ten public checks passed
 
 Branch: intoxicated/memory-trial. Code tested:

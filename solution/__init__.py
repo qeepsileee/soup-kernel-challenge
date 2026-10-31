@@ -14,8 +14,8 @@ The rules in short (the README and the task statement have the full ones):
 """
 
 def apply():
-    # RUNTIME TRIAL BRANCH: new changes await GPU/full-task validation.
-    # Validated memory fallback: c6f6096 (3279 MiB); INT8 fallback: 85b03db.
+    # HEAD-PADDING TRIAL: skip head work only for unconsumed padding positions.
+    # Validated parent: fa12d01, 67.44s / 3119 MiB. New pin needs full validation.
     from .swiglu import patch_qwen2_mlp
     from .nf4 import patch_dequantize
     from .nf4_linear import patch_linear

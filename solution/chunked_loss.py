@@ -118,7 +118,7 @@ class _PrecomputedHeadLossFunction(torch.autograd.Function):
     from scaling dLogits first: this is opt-in and needs full quality validation.
     """
     @staticmethod
-    def forward(ctx, hidden, head_weight, target, chunk_size, denom, with_grad):
+    def forward(ctx, hidden, head_weight, target, chunk_size, denom, with_grad, attention_mask):
         batch, length, dim = hidden.shape
         compute = torch.get_autocast_dtype("cuda") if torch.is_autocast_enabled() else hidden.dtype
         weight = head_weight.to(compute)
@@ -126,18 +126,28 @@ class _PrecomputedHeadLossFunction(torch.autograd.Function):
         rows, vocab = flat.shape[0], weight.shape[0]
         # Labelled positions first: dHidden GEMMs never process prompt/pad rows.
         valid = (labels != IGNORE_INDEX).nonzero(as_tuple=False).flatten()
-        ignored = (labels == IGNORE_INDEX).nonzero(as_tuple=False).flatten()
+        entropy_rows = labels == IGNORE_INDEX
+        if attention_mask is not None:
+            # Entropy is consumed only where attention_mask is nonzero. Retain
+            # EVERY labelled row above, even at a masked position (e.g. a left
+            # padding boundary). Prompt entropy remains, including -100 labels.
+            entropy_rows = entropy_rows & (attention_mask.reshape(-1) != 0)
+        ignored = entropy_rows.nonzero(as_tuple=False).flatten()
         order = torch.cat((valid, ignored))
-        losses = torch.empty(rows, device=hidden.device, dtype=torch.float32)
-        entropies = torch.empty_like(losses)
-        hits = torch.empty(rows, device=hidden.device, dtype=torch.int32)
+        # Unprojected padding has no loss, hit or consumed entropy. This sentinel
+        # changes no logged/rewind value: only (mask=0 AND target=-100) is skipped.
+        complete = order.numel() == rows
+        allocate_stats = torch.empty if complete else torch.zeros
+        losses = allocate_stats(rows, device=hidden.device, dtype=torch.float32)
+        entropies = torch.empty_like(losses) if complete else torch.zeros_like(losses)
+        hits = allocate_stats(rows, device=hidden.device, dtype=torch.int32)
         gradient = torch.zeros((rows, dim), device=hidden.device, dtype=torch.float32) if with_grad else None
         # Keep the negative target entry below FP16's maximum even when a
         # diagnostic contains only one labelled token.
         anchor = min(65536.0, 16384.0 * denom)
         scale = torch.tensor(anchor, device=hidden.device, dtype=torch.float32)
         with torch.autocast("cuda", enabled=False):
-            for start in range(0, rows, batch * chunk_size):
+            for start in range(0, order.numel(), batch * chunk_size):
                 index = order[start:start + batch * chunk_size]
                 logits = flat[index].to(compute) @ weight.t()
                 lse = torch.empty(index.numel(), device=hidden.device, dtype=torch.float32)
@@ -153,6 +163,12 @@ class _PrecomputedHeadLossFunction(torch.autograd.Function):
                             num_warps=4, enable_fp_fusion=False)
                     gradient[index[:count]] = (logits[:count] @ weight).float() / anchor
                 del logits
+        if attention_mask is not None and not getattr(_PrecomputedHeadLossFunction, "_padding_reported", False):
+            # One host-only message per process; sizes come from nonzero() which
+            # this path already needs. No extra device synchronization or work.
+            print(f"[head_padding] projected_rows={order.numel()} total_rows={rows} "
+                  f"labelled_rows={valid.numel()}", flush=True)
+            _PrecomputedHeadLossFunction._padding_reported = True
         ctx.dtype = hidden.dtype
         ctx.shape = hidden.shape
         ctx.with_grad = with_grad
@@ -166,10 +182,10 @@ class _PrecomputedHeadLossFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_loss, _entropy, _loss, _hits):
         if not ctx.with_grad or grad_loss is None:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         gradient, = ctx.saved_tensors
         grad = (gradient * grad_loss.float()).to(ctx.dtype).view(ctx.shape)
-        return grad, None, None, None, None, None
+        return grad, None, None, None, None, None, None
 
 
 def chunked_head_loss(
@@ -181,6 +197,7 @@ def chunked_head_loss(
     shift_labels: Optional[torch.Tensor] = None,
     ignore_index: int = IGNORE_INDEX,
     precompute_grad: bool = False,
+    attention_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, ChunkedStep]:
     """Computes Causal LM loss and compact metrics without full logits materialization.
 
@@ -192,6 +209,11 @@ def chunked_head_loss(
         num_items_in_batch: optional batch item count for loss normalization.
         shift_labels: optional pre-shifted labels.
         ignore_index: ignored target index (default: -100).
+        attention_mask: optional [B,T] mask used by the trainer's entropy metric.
+            In precomputed training, skip only mask=0 AND ignored-target rows.
+            Their unconsumed token_entropy entries are zero; every prompt/label
+            row and all externally consumed metrics/gradients are retained.
+            Without this argument, retain the original full-position behavior.
 
     Returns:
         loss: scalar tensor loss.
@@ -204,6 +226,9 @@ def chunked_head_loss(
     target = target.to(hidden.device).contiguous()
     if target.shape != hidden.shape[:2]:
         raise ValueError("target shape must match hidden batch/sequence dimensions")
+    if attention_mask is not None and (not isinstance(attention_mask, torch.Tensor)
+            or attention_mask.shape != hidden.shape[:2] or attention_mask.device != hidden.device):
+        raise ValueError("attention_mask must match hidden batch/sequence dimensions and device")
 
     labelled = (target != ignore_index).sum()
     if num_items_in_batch is None:
@@ -222,10 +247,13 @@ def chunked_head_loss(
     if head_weight.ndim != 2 or head_weight.shape[1] != hidden.shape[-1]:
         raise ValueError("head shape must match hidden dimension")
 
-    function = _PrecomputedHeadLossFunction if precompute_grad and with_grad else _ChunkedHeadLossFunction
-    loss, token_entropy, token_loss, correct = function.apply(
-        hidden, head_weight, target, chunk_size, denom, with_grad
-    )
+    if precompute_grad and with_grad:
+        loss, token_entropy, token_loss, correct = _PrecomputedHeadLossFunction.apply(
+            hidden, head_weight, target, chunk_size, denom, with_grad, attention_mask)
+    else:
+        # The exact recompute and no-grad/eval path keeps its validated behavior.
+        loss, token_entropy, token_loss, correct = _ChunkedHeadLossFunction.apply(
+            hidden, head_weight, target, chunk_size, denom, with_grad)
 
     step = ChunkedStep(
         token_entropy=token_entropy,
