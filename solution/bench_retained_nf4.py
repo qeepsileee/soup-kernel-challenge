@@ -13,12 +13,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, default=2048)
     parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--retain", choices=("0", "1", "kv"), default="1")
+    parser.add_argument("--dx-layout", choices=("original", "transposed"), default="original")
     args = parser.parse_args()
     if min(args.tokens, args.iterations) < 1:
         parser.error("tokens and iterations must be positive")
     torch.manual_seed(914)
-    print(torch.cuda.get_device_name(), "tokens=", args.tokens)
+    print(torch.cuda.get_device_name(), "tokens=", args.tokens,
+          "retain=", args.retain, "dx-layout=", args.dx_layout)
     previous = os.environ.get("SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT")
+    previous_layout = os.environ.get("SOUP_EXPERIMENT_NF4_DX_LAYOUT")
     try:
         for name, shape in qwen_projection_shapes().items():
             w = torch.randn(shape, device="cuda", dtype=torch.float16) * .02
@@ -31,8 +35,9 @@ def main():
                 x.grad = None
                 NF4Linear.apply(x, packed, None, state).backward(grad)
 
-            def measure(retain):
-                os.environ["SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT"] = str(retain)
+            def measure(candidate):
+                os.environ["SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT"] = args.retain if candidate else "0"
+                os.environ["SOUP_EXPERIMENT_NF4_DX_LAYOUT"] = args.dx_layout if candidate else "original"
                 for _ in range(5):
                     step()
                 torch.cuda.synchronize()
@@ -50,7 +55,7 @@ def main():
                     b, c = measure(0), measure(1)
                 bases.append(b)
                 candidates.append(c)
-            print(f"{name:12s} base={median(bases):.3f}ms retained={median(candidates):.3f}ms "
+            print(f"{name:12s} base={median(bases):.3f}ms candidate={median(candidates):.3f}ms "
                   f"speedup={median(bases)/median(candidates):.3f}x "
                   f"pairs={[round(b/c, 3) for b,c in zip(bases,candidates)]}", flush=True)
     finally:
@@ -58,6 +63,10 @@ def main():
             os.environ.pop("SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT", None)
         else:
             os.environ["SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT"] = previous
+        if previous_layout is None:
+            os.environ.pop("SOUP_EXPERIMENT_NF4_DX_LAYOUT", None)
+        else:
+            os.environ["SOUP_EXPERIMENT_NF4_DX_LAYOUT"] = previous_layout
     print("Layer timings omit simultaneous retention across the full model; use the official harness for peak memory.")
 
 
