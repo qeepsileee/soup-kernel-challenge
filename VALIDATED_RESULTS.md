@@ -1,6 +1,42 @@
 # Validated public-data run on Kaggle T4
 
-## Current validated defaults: 85b03db, no environment flags
+## Memory branch: c6f6096, 3279MiB, all ten public checks passed
+
+Branch: intoxicated/memory-trial. Code tested:
+c6f6096a58c29ef319e6d7ad40cfac01a561d369, recorded 2026-10-31.
+Source: user-supplied official Kaggle console output for runs_memory_trial.
+No experiment environment variables were required. The normal apply() on this
+branch adds compact saved K/V, bitpacked dropout masks and NF4 saved MLP
+activations. The separate intoxicated/nf4-lora branch retains the INT8 defaults.
+
+| Run | Full time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 89.67 | 14345 |
+| solution_1 | 68.50 | 3279 |
+| solution_2 | 71.17 | 3279 |
+| base_2 | 86.65 | 14345 |
+
+Means from printed values: base 88.16s, solution 69.835s (displayed 69.8s).
+Reported speedup 1.262x, memory ratio 4.375x; 77.1% less peak memory,
+11066MiB saved against its paired base. Peak is 1036MiB / 24.0% below the
+previous 4315MiB configuration. Cross-session time differences do not isolate
+the effect of these codecs because the paired base times also changed.
+
+Eval loss 2.04966 -> 2.05022, reported +0.027%, below the +0.5% limit.
+First-step loss differs 0.04%; mean loss differs 0.06%. Own kernels account
+for 8.6%, lowest of two runs; example-derived MLP kernels do not count.
+All 66 solution tests, all ten automatic checks and all 79 Soup regression
+tests passed, including clean T4 measurement and task/outputs within tolerance.
+This is a small quality deviation within public admission limits, not equal
+gradients or a quality improvement. Hidden-data and manual review remain open.
+
+Raw official JSON and saved notebook have not been independently downloaded
+here. Preserve runs_memory_trial and pin reproduction to the full code SHA
+above. See MEMORY_TRIAL.md for reproduction and implementation details.
+No final README/SUBMISSION changes or merge into the INT8 branch were made.
+The 2500--3500MiB target range was reached; 40 seconds was not reached.
+
+## INT8 branch validated defaults: 85b03db, no environment flags
 
 The current apply() uses chunk=128, precomputed head gradient, frozen half
 storage and small K/V weight retention unconditionally, with no
