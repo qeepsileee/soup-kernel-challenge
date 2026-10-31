@@ -8,6 +8,7 @@ own kernels next to them (keeping the example running is fine) or replace this f
 import torch
 import triton
 import triton.language as tl
+from .fused_swiglu import fused_swiglu
 
 BLOCK = 1024
 
@@ -76,6 +77,6 @@ def patch_qwen2_mlp():
         act = getattr(getattr(self, "config", None), "hidden_act", "silu")
         if act != "silu" or not x.is_cuda:
             return original(self, x)
-        return self.down_proj(swiglu(self.gate_proj(x), self.up_proj(x)))
+        return self.down_proj(fused_swiglu(self.gate_proj(x), self.up_proj(x)))
 
     modeling_qwen2.Qwen2MLP.forward = forward
