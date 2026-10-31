@@ -1,25 +1,49 @@
 # Validated public-data run on Kaggle T4
 
-## Current code: fixed defaults, pending no-environment validation
+## Current validated defaults: 85b03db, no environment flags
 
 The current apply() uses chunk=128, precomputed head gradient, frozen half
 storage and small K/V weight retention unconditionally, with no
 SOUP_EXPERIMENT_* variables required. Other NF4 weight-retention/layout trials
 are isolated in nf4_experiments.py and are not imported by apply().
-This corresponds to the K/V configuration validated below at 8e44f13, but this
-new code pin has NOT yet passed the full no-environment Kaggle run.
-Do not label its 66.66s / 4315MiB as a fresh measurement. README/SUBMISSION
-finalization is deferred at the team's request while optimization continues.
+Code tested: 85b03db58bf420b39be9759a2b892807d2c37372, recorded 2026-10-31.
+The user supplied full runs_fixed_defaults_kv output: all SOUP_EXPERIMENT_*
+variables were explicitly unset before pytest/run_task/check_rules. All 56
+solution tests passed (no skips); all ten admission checks and 79 Soup
+regression tests passed. This closes the environment-dependent reproduction
+gap. README/SUBMISSION finalization remains deferred at the team's request.
 
-Validate in a clean child process, with experiment variables absent:
+| Run | Full time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 75.75 | 14345 |
+| solution_1 | 63.44 | 4315 |
+| solution_2 | 65.78 | 4315 |
+| base_2 | 82.18 | 14345 |
+
+Mean/median of two runs: base 78.965s, solution 64.61s (displayed 79.0 / 64.6s).
+Reported speedup 1.222x, memory ratio 3.324x; about 18.2% less wall time and
+69.9% less peak memory (10030MiB saved). Eval loss 2.04965 -> 2.04946
+(-0.009%), with no public-quality regression detected. This tiny loss decrease
+is not evidence of general quality improvement. Loss curve first-step deviation
+0.04%, mean 0.04--0.05%. Own kernels 8.5%, lowest of two solution runs; example
+and paired-example derivatives are excluded as required. Clean measurement passed.
+
+Source is the user's console output, not independently downloaded raw JSON.
+Preserve the runs_fixed_defaults_kv directory and the saved notebook version
+with COMMIT pinned to the full SHA above. Later documentation-only commits do
+not replace that tested pin. No improvement is inferred solely from the time
+difference against 66.66s: paired base times also changed between sessions.
+The under-50s target has NOT been achieved; gap from this mean is >14.61s.
+
+Reproduction on the pinned T4 environment, without experiment variables:
 
 ```bash
 python -m pytest solution -q
-python harness/run_task.py --repeats 2 --out runs_fixed_defaults
-python harness/check_rules.py --result runs_fixed_defaults/result.json
+python harness/run_task.py --repeats 2 --out runs_fixed_defaults_kv
+python harness/check_rules.py --result runs_fixed_defaults_kv/result.json
 ```
 
-## Latest validated candidate: small K/V retention
+## Prior validated candidate: small K/V retention via environment
 
 Code tested: 8e44f13b68528626dd919fcb192fa127615fde8b, recorded 2026-10-31.
 Source: user supplied runs_retained_kv/result.json summary and all ten checks.
