@@ -28,7 +28,6 @@ output projection, the function is a no-op and training continues unchanged.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 # Must match Soup's attribute names exactly so RewindTrainer can find the step.
@@ -38,7 +37,7 @@ _STEP_ATTR = "_soup_chunked_step"
 # Default chunk size in sequence-length tokens per GEMM call.
 # At B=4, C=64: one chunk logits buffer = 4*64*151936*2 bytes ≈ 74 MB (FP16).
 # At C=32 it halves to ~37 MB. Tune here without changing the kernel.
-_DEFAULT_CHUNK = 64
+_DEFAULT_CHUNK = 128
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +148,7 @@ class _OwnChunkedHeadLossHook:
             chunk_size=self.chunk,
             num_items_in_batch=kwargs.get("num_items_in_batch"),
             shift_labels=kwargs.get("shift_labels"),
-            precompute_grad=os.environ.get("SOUP_EXPERIMENT_PRECOMPUTE_HEAD") == "1",
+            precompute_grad=True,
         )
         self.last_step = step
 
@@ -252,9 +251,8 @@ def patch_chunked_loss(chunk_size: int = _DEFAULT_CHUNK) -> None:
 
     Safe to call multiple times (idempotent).
     """
-    chunk_size = int(os.environ.get("SOUP_EXPERIMENT_HEAD_CHUNK", str(chunk_size)))
     if chunk_size < 1:
-        raise ValueError("SOUP_EXPERIMENT_HEAD_CHUNK must be positive")
+        raise ValueError("chunk_size must be positive")
     try:
         from trl import SFTTrainer
     except ImportError:

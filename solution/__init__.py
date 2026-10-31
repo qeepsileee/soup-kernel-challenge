@@ -32,8 +32,8 @@ def apply():
     patch_entropy()  # memory-light metric; coordinate with participant 1
     patch_mlp_bridge()  # avoid widening/narrowing frozen MLP activations
     patch_lora()  # selective: wide q-like projections with >=2048 token rows
-    patch_chunked_loss()  # fused Triton CE: eliminates full [B,T,V] logits tensor
+    patch_chunked_loss()  # fixed chunk=128, precomputed hidden gradient
     patch_compressed_mlp()  # INT8 saved activations; validated on the public task
-    patch_half_storage()  # opt-in experiment; off unless explicitly requested
+    patch_half_storage()  # exact-value FP16 frozen storage; no env flags required
     # Both custom dX GEMM experiments regressed on T4. Keep them opt-in via
     # bench_nf4 flags, never activate them in the normal training entry point.

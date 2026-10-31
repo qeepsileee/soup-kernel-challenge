@@ -8,7 +8,7 @@ import time
 def main():
     import torch
     import bitsandbytes.functional as functional
-    from .nf4_linear import NF4Linear
+    from .nf4_experiments import ExperimentalNF4Linear as NF4Linear
     from .nf4_format import qwen_projection_shapes
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, default=2048)

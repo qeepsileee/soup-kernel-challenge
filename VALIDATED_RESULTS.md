@@ -1,5 +1,24 @@
 # Validated public-data run on Kaggle T4
 
+## Current code: fixed defaults, pending no-environment validation
+
+The current apply() uses chunk=128, precomputed head gradient and frozen half
+storage unconditionally, with no SOUP_EXPERIMENT_* variables required. NF4
+weight-retention/layout trials are isolated in nf4_experiments.py and are not
+imported by apply(); standalone benchmarks can still exercise those trials.
+This corresponds to the configuration validated below at dee0170, but this
+new code pin has NOT yet passed the full no-environment Kaggle run.
+Do not label its 67.66s / 4269MiB as a fresh measurement. README/SUBMISSION
+finalization is deferred at the team's request while optimization continues.
+
+Validate in a clean child process, with experiment variables absent:
+
+```bash
+python -m pytest solution -q
+python harness/run_task.py --repeats 2 --out runs_fixed_defaults
+python harness/check_rules.py --result runs_fixed_defaults/result.json
+```
+
 ## Latest validated candidate: half storage + precomputed head, chunk 128
 
 Code tested: dee0170041604400b1ddcc24eeab766b4a569ea0. Recorded 2026-10-31.

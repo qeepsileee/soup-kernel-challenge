@@ -1,10 +1,9 @@
-"""Opt-in experiment: exact-value FP16 storage of frozen FP32 parameters.
+"""Validated default: exact-value FP16 storage of frozen FP32 parameters.
 
 Parameter values round-trip exactly, but activation/gradient rounding changes.
-Full official quality validation is still required. Never convert trainable
+Full official validation is required for every release pin. Never convert trainable
 adapters, Params4bit subclasses, or buffers (including quantization metadata).
 """
-import os
 
 
 def convert_frozen_exact(model):
@@ -28,8 +27,6 @@ def convert_frozen_exact(model):
 
 
 def patch_half_storage():
-    if os.environ.get("SOUP_EXPERIMENT_HALF_STORAGE") != "1":
-        return
     from soup_cli.trainer.sft import SFTTrainerWrapper
     original = SFTTrainerWrapper._setup_transformers
     if getattr(original, "_own_half_storage", False):

@@ -14,22 +14,17 @@ import sys
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="runs_backward_profile")
-    parser.add_argument("--head-chunk", type=int, default=128)
-    parser.add_argument("--recompute-head", action="store_true")
-    parser.add_argument("--half-storage", action="store_true")
+    parser.add_argument("--half-storage", action="store_true",
+                        help="compatibility flag; frozen half storage is now always enabled")
     args = parser.parse_args()
-    if args.head_chunk < 1:
-        parser.error("head-chunk must be positive")
     repo = Path(__file__).resolve().parents[1]
     os.chdir(repo)
     # Must precede importing torch. Diagnostics use exactly one GPU.
     sys.path.insert(0, str(repo / "harness"))
     from common import ENV
     os.environ.update(ENV)
-    settings = {"SOUP_EXPERIMENT_HEAD_CHUNK": str(args.head_chunk),
-                "SOUP_EXPERIMENT_PRECOMPUTE_HEAD": "0" if args.recompute_head else "1",
-                "SOUP_EXPERIMENT_HALF_STORAGE": "1" if args.half_storage else "0"}
-    os.environ.update(settings)
+    settings = {"head_chunk": 128, "precompute_head": True,
+                "half_storage": True, "retain_nf4_weight": False, "dx_layout": "original"}
     print("Diagnostic settings:", settings, flush=True)
     import torch
     import yaml

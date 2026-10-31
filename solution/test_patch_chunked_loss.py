@@ -7,6 +7,27 @@ from solution.test_nf4 import GPU_AVAILABLE
 @unittest.skipUnless(GPU_AVAILABLE, "CUDA dependencies required")
 class PatchChunkedLossTests(unittest.TestCase):
 
+    def test_default_configuration_ignores_stale_environment(self):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import torch
+        from solution.patch_chunked_loss import attach_hook, detach_hook, _HOOK_ATTR
+
+        model = self._make_tiny_causal_lm()
+        trainer = SimpleNamespace()
+        with patch.dict(os.environ, {"SOUP_EXPERIMENT_HEAD_CHUNK": "1",
+                                     "SOUP_EXPERIMENT_PRECOMPUTE_HEAD": "0"}):
+            attach_hook(model, trainer)
+            hook = getattr(trainer, _HOOK_ATTR)
+            try:
+                with patch.object(hook, "_chunked_head_loss", wraps=hook._chunked_head_loss) as loss:
+                    model(labels=torch.randint(512, (2, 32), device="cuda"))
+                self.assertEqual(loss.call_args.kwargs["chunk_size"], 128)
+                self.assertTrue(loss.call_args.kwargs["precompute_grad"])
+            finally:
+                detach_hook(trainer)
+
     def _make_tiny_causal_lm(self, batch=2, seq=32, hidden=128, vocab=512):
         """Build a minimal CausalLM-like object for testing the hook."""
         import torch

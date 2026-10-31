@@ -10,6 +10,7 @@ class RetainedNF4Tests(unittest.TestCase):
         import torch
         import bitsandbytes.functional as functional
         from solution import nf4_linear
+        from solution.nf4_experiments import ExperimentalNF4Linear
         torch.manual_seed(914)
         for shape in ((256, 1536), (1536, 1536), (8960, 1536), (1536, 8960)):
             with self.subTest(shape=shape):
@@ -26,8 +27,8 @@ class RetainedNF4Tests(unittest.TestCase):
                                                  "SOUP_EXPERIMENT_NF4_DX_LAYOUT": "original"}):
                         with patch.object(nf4_linear, "dequantize_nf4",
                                           wraps=nf4_linear.dequantize_nf4) as decoder:
-                            ya = nf4_linear.NF4Linear.apply(a, packed, None, state)
-                            yb = nf4_linear.NF4Linear.apply(b, packed, None, state)
+                            ya = ExperimentalNF4Linear.apply(a, packed, None, state)
+                            yb = ExperimentalNF4Linear.apply(b, packed, None, state)
                             # Reverse consumption order catches unsafe buffer reuse.
                             yb.backward(g)
                             ya.backward(g)
@@ -46,7 +47,7 @@ class RetainedNF4Tests(unittest.TestCase):
     def test_transposed_dx_with_noncontiguous_upstream(self):
         import torch
         import bitsandbytes.functional as functional
-        from solution.nf4_linear import NF4Linear
+        from solution.nf4_experiments import ExperimentalNF4Linear as NF4Linear
         torch.manual_seed(915)
         for shape in ((256, 1536), (1536, 1536), (8960, 1536), (1536, 8960)):
             with self.subTest(shape=shape):

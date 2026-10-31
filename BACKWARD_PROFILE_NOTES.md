@@ -1,5 +1,12 @@
 # CTO-directed backward diagnostic
 
+Current code note: head chunk=128, precompute and half storage are now fixed
+defaults. The diagnostic reflects those settings without env variables;
+--half-storage remains a no-op compatibility flag. Old --recompute-head and
+--head-chunk switches are removed rather than claiming to change fixed code.
+NF4 retention/layout trials live in a separate standalone experimental Function.
+The historical option/configuration discussion below refers to earlier pins.
+
 `python -m solution.profile_backward` runs the existing short harness profiler
 with extra attribution ranges. It does not edit harness/, task/ or tests/.
 It is never imported by solution.apply() and is not a scored measurement.
