@@ -69,3 +69,23 @@ quantizes FP16 source weights, matching the intended T4 model route; the kernel'
 FP16 restriction is retained. Tests assert quant-state dtype before numerical
 comparison. Benchmark uses the same corrected fixture. No CUDA correctness or
 performance result for the paired kernels has been established yet.
+
+## First corrected T4 measurement (458144c)
+
+Both candidate tests passed (2 passed, no skips). Results supplied by the user:
+
+| Token rows | Baseline fwd+bwd | Paired fwd+bwd | Speedup | Incremental allocated peak base/paired | Live after fwd base/paired |
+|---|---:|---:|---:|---:|---:|
+| 2048 | 16.135ms | 16.025ms | 1.007x | 178.7 / 173.0MiB | 44.5 / 44.5MiB |
+| 512 | 4.908ms | 4.773ms | 1.028x | 63.3 / 82.3MiB | 10.8 / 10.8MiB |
+
+Paired ratios at 2048: 1.083, 1.006, 1.011, 0.996; at 512: 1.072, 1.053,
+1.024, 1.033. This is a small/near-noise benefit for large matrices, a modest
+benefit for smaller matrices, and no saved-activation-memory reduction. The
+smaller case's allocated peak grows by 19MiB. Do not enable by default or claim
+a meaningful whole-model speedup. No full-task quality/admission run exists.
+No official full training run is being requested for this candidate yet.
+
+Two outstanding pieces of stronger evidence should be preserved/recovered
+before additional speculative microbenchmarks: the completed runs_retained_kv
+result/checks, and no-env full validation of the fixed-default configuration.
