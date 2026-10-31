@@ -35,18 +35,25 @@ class NF4Linear(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, packed, bias, state):
         ctx.state = state
-        ctx.save_for_backward(packed)
         if uses_custom_gemm(x, state):
+            ctx.save_for_backward(packed)
             return original_custom_forward(x, packed, bias, state)
         w = dequantize_nf4(packed, state).to(x.dtype)
+        # Validated K/V-only policy: retain ~42 MiB across 28 layers, rather
+        # than retaining dense weights for the much larger MLP projections.
+        if ctx.needs_input_grad[0] and tuple(state.shape) == (256, 1536):
+            ctx.save_for_backward(packed, w)
+        else:
+            ctx.save_for_backward(packed)
         return torch.nn.functional.linear(x, w, bias)
 
     @staticmethod
     def backward(ctx, grad):
         if not ctx.needs_input_grad[0]:
             return None, None, None, None
-        packed, = ctx.saved_tensors
-        w = dequantize_nf4(packed, ctx.state).to(grad.dtype)
+        saved = ctx.saved_tensors
+        packed = saved[0]
+        w = saved[1] if len(saved) == 2 else dequantize_nf4(packed, ctx.state).to(grad.dtype)
         return torch.matmul(grad, w), None, None, None
 
 

@@ -24,7 +24,7 @@ def main():
     from common import ENV
     os.environ.update(ENV)
     settings = {"head_chunk": 128, "precompute_head": True,
-                "half_storage": True, "retain_nf4_weight": False, "dx_layout": "original"}
+                "half_storage": True, "retain_nf4_weight": "kv", "dx_layout": "original"}
     print("Diagnostic settings:", settings, flush=True)
     import torch
     import yaml

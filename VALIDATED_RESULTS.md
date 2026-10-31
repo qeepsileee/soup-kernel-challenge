@@ -2,13 +2,13 @@
 
 ## Current code: fixed defaults, pending no-environment validation
 
-The current apply() uses chunk=128, precomputed head gradient and frozen half
-storage unconditionally, with no SOUP_EXPERIMENT_* variables required. NF4
-weight-retention/layout trials are isolated in nf4_experiments.py and are not
-imported by apply(); standalone benchmarks can still exercise those trials.
-This corresponds to the configuration validated below at dee0170, but this
+The current apply() uses chunk=128, precomputed head gradient, frozen half
+storage and small K/V weight retention unconditionally, with no
+SOUP_EXPERIMENT_* variables required. Other NF4 weight-retention/layout trials
+are isolated in nf4_experiments.py and are not imported by apply().
+This corresponds to the K/V configuration validated below at 8e44f13, but this
 new code pin has NOT yet passed the full no-environment Kaggle run.
-Do not label its 67.66s / 4269MiB as a fresh measurement. README/SUBMISSION
+Do not label its 66.66s / 4315MiB as a fresh measurement. README/SUBMISSION
 finalization is deferred at the team's request while optimization continues.
 
 Validate in a clean child process, with experiment variables absent:
@@ -19,7 +19,39 @@ python harness/run_task.py --repeats 2 --out runs_fixed_defaults
 python harness/check_rules.py --result runs_fixed_defaults/result.json
 ```
 
-## Latest validated candidate: half storage + precomputed head, chunk 128
+## Latest validated candidate: small K/V retention
+
+Code tested: 8e44f13b68528626dd919fcb192fa127615fde8b, recorded 2026-10-31.
+Source: user supplied runs_retained_kv/result.json summary and all ten checks.
+Historical flags: HEAD_CHUNK=128, PRECOMPUTE_HEAD=1, HALF_STORAGE=1,
+RETAIN_NF4_WEIGHT=kv, NF4_DX_LAYOUT=original (all prefixed SOUP_EXPERIMENT_).
+The newer production code expresses the same policy without these variables.
+
+| Run | Full time (s) | Training loop (s) | Peak GPU memory (MiB) |
+|---|---:|---:|---:|
+| base_1 | 81.53 | 59.84 | 14345 |
+| solution_1 | 66.38 | 44.54 | 4315 |
+| solution_2 | 66.95 | 44.61 | 4315 |
+| base_2 | 82.33 | 60.70 | 14345 |
+
+Official summary: base 81.93s, solution 66.66s, speedup 1.2291x (18.6% less
+wall time); memory ratio 3.3244x (10030MiB / 69.9% less memory). Both solution
+runs measured the same peak. Eval loss 2.04968 -> 2.04944 (-0.012%); do not
+claim statistically significant quality improvement. Own kernels 8.4%, lowest
+of two runs. All ten checks passed, including clean measurement and 79 Soup
+regression tests. First training loss differs 0.04%, mean differs 0.04--0.05%.
+
+Median loop time 60.27 -> 44.58s; time outside the loop stays about 22s.
+The earlier reader falsely printed first_2_steps=0 because run_task removes
+step_s from embedded metrics. That field is available in each run's own
+metrics.json; solution.summarize_run reads those files and prints null rather
+than zero when missing. No zero-startup-cost conclusion is supported.
+
+Compared with the preceding 67.66s/4269MiB result, this mean is about 1s lower
+and memory 46MiB higher. Sessions had different paired bases, so this is not an
+isolated causal estimate of retention's benefit. Under 50s has not been achieved.
+
+## Prior validated candidate: half storage + precomputed head, chunk 128
 
 Code tested: dee0170041604400b1ddcc24eeab766b4a569ea0. Recorded 2026-10-31.
 Source: user's official Kaggle output, runs_head128_half_storage/result.json.

@@ -6,6 +6,30 @@ from solution.test_nf4 import GPU_AVAILABLE
 
 @unittest.skipUnless(GPU_AVAILABLE, "CUDA + bitsandbytes required")
 class RetainedNF4Tests(unittest.TestCase):
+    def test_production_matches_validated_kv_policy_despite_stale_flags(self):
+        import torch
+        import bitsandbytes.functional as functional
+        from solution.nf4_linear import NF4Linear
+        from solution.nf4_experiments import ExperimentalNF4Linear
+        torch.manual_seed(916)
+        for shape in ((256, 1536), (1536, 1536), (8960, 1536), (1536, 8960)):
+            with self.subTest(shape=shape):
+                w = torch.randn(shape, device="cuda", dtype=torch.float16) * .02
+                packed, state = functional.quantize_4bit(w, quant_type="nf4", compress_statistics=True)
+                x = torch.randn(512, shape[1], device="cuda", dtype=torch.float16)
+                g = torch.randn(512, shape[0], device="cuda", dtype=torch.float16)
+                a, b = x.clone().requires_grad_(True), x.clone().requires_grad_(True)
+                with patch.dict(os.environ, {"SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT": "kv",
+                                             "SOUP_EXPERIMENT_NF4_DX_LAYOUT": "original"}):
+                    ref = ExperimentalNF4Linear.apply(a, packed, None, state)
+                with patch.dict(os.environ, {"SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT": "0",
+                                             "SOUP_EXPERIMENT_NF4_DX_LAYOUT": "transposed"}):
+                    actual = NF4Linear.apply(b, packed, None, state)
+                ref.backward(g)
+                actual.backward(g)
+                torch.testing.assert_close(actual, ref, rtol=0, atol=0)
+                torch.testing.assert_close(b.grad, a.grad, rtol=0, atol=0)
+
     def test_two_live_forwards_have_exact_outputs_and_gradients(self):
         import torch
         import bitsandbytes.functional as functional
