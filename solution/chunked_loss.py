@@ -110,6 +110,68 @@ class _ChunkedHeadLossFunction(torch.autograd.Function):
         return grad_hidden, None, None, None, None, None
 
 
+class _PrecomputedHeadLossFunction(torch.autograd.Function):
+    """Experimental first-order loss: reuse forward logits for dHidden.
+
+    A power-of-two anchor prevents FP16 underflow before the head GEMM.
+    Actual upstream scaling is still applied in backward. Rounding can differ
+    from scaling dLogits first: this is opt-in and needs full quality validation.
+    """
+    @staticmethod
+    def forward(ctx, hidden, head_weight, target, chunk_size, denom, with_grad):
+        batch, length, dim = hidden.shape
+        compute = torch.get_autocast_dtype("cuda") if torch.is_autocast_enabled() else hidden.dtype
+        weight = head_weight.to(compute)
+        flat, labels = hidden.reshape(-1, dim), target.reshape(-1)
+        rows, vocab = flat.shape[0], weight.shape[0]
+        # Labelled positions first: dHidden GEMMs never process prompt/pad rows.
+        valid = (labels != IGNORE_INDEX).nonzero(as_tuple=False).flatten()
+        ignored = (labels == IGNORE_INDEX).nonzero(as_tuple=False).flatten()
+        order = torch.cat((valid, ignored))
+        losses = torch.empty(rows, device=hidden.device, dtype=torch.float32)
+        entropies = torch.empty_like(losses)
+        hits = torch.empty(rows, device=hidden.device, dtype=torch.int32)
+        gradient = torch.zeros((rows, dim), device=hidden.device, dtype=torch.float32) if with_grad else None
+        # Keep the negative target entry below FP16's maximum even when a
+        # diagnostic contains only one labelled token.
+        anchor = min(65536.0, 16384.0 * denom)
+        scale = torch.tensor(anchor, device=hidden.device, dtype=torch.float32)
+        with torch.autocast("cuda", enabled=False):
+            for start in range(0, rows, batch * chunk_size):
+                index = order[start:start + batch * chunk_size]
+                logits = flat[index].to(compute) @ weight.t()
+                lse = torch.empty(index.numel(), device=hidden.device, dtype=torch.float32)
+                loss, entropy, hit, _, _ = fused_cross_entropy(
+                    logits, labels[index], denom=denom, needs_grad=False, lse_out=lse)
+                losses[index], entropies[index], hits[index] = loss, entropy, hit
+                count = min(index.numel(), max(valid.numel() - start, 0))
+                if with_grad and count:
+                    targets = labels[index[:count]].contiguous()
+                    with torch.cuda.device(hidden.device):
+                        chunk_scaled_grad_kernel[(count, triton.cdiv(vocab, 4096))](
+                            logits, targets, lse, scale, vocab, denom, 4096,
+                            num_warps=4, enable_fp_fusion=False)
+                    gradient[index[:count]] = (logits[:count] @ weight).float() / anchor
+                del logits
+        ctx.dtype = hidden.dtype
+        ctx.shape = hidden.shape
+        ctx.with_grad = with_grad
+        if with_grad:
+            ctx.save_for_backward(gradient)
+        total_hits = hits.sum().to(torch.int64)
+        token_loss, token_entropy = losses.view(batch, length), entropies.view(batch, length)
+        ctx.mark_non_differentiable(token_entropy, token_loss, total_hits)
+        return losses.sum() / denom, token_entropy, token_loss, total_hits
+
+    @staticmethod
+    def backward(ctx, grad_loss, _entropy, _loss, _hits):
+        if not ctx.with_grad or grad_loss is None:
+            return None, None, None, None, None, None
+        gradient, = ctx.saved_tensors
+        grad = (gradient * grad_loss.float()).to(ctx.dtype).view(ctx.shape)
+        return grad, None, None, None, None, None
+
+
 def chunked_head_loss(
     hidden: torch.Tensor,
     lm_head: torch.nn.Module,
@@ -118,6 +180,7 @@ def chunked_head_loss(
     num_items_in_batch: Optional[Any] = None,
     shift_labels: Optional[torch.Tensor] = None,
     ignore_index: int = IGNORE_INDEX,
+    precompute_grad: bool = False,
 ) -> Tuple[torch.Tensor, ChunkedStep]:
     """Computes Causal LM loss and compact metrics without full logits materialization.
 
@@ -159,7 +222,8 @@ def chunked_head_loss(
     if head_weight.ndim != 2 or head_weight.shape[1] != hidden.shape[-1]:
         raise ValueError("head shape must match hidden dimension")
 
-    loss, token_entropy, token_loss, correct = _ChunkedHeadLossFunction.apply(
+    function = _PrecomputedHeadLossFunction if precompute_grad and with_grad else _ChunkedHeadLossFunction
+    loss, token_entropy, token_loss, correct = function.apply(
         hidden, head_weight, target, chunk_size, denom, with_grad
     )
 
