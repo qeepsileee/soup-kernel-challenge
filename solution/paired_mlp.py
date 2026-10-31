@@ -115,7 +115,9 @@ def paired_mlp(module, x):
     if (tuple(gs.shape) != tuple(us.shape) or gs.shape[0] % 64
             or tuple(ds.shape) != (gs.shape[1], gs.shape[0])
             or any(s.dtype != torch.float16 for s in (gs, us, ds))):
-        raise ValueError("paired MLP requires matching gate/up and transposed down dimensions")
+        details = [(tuple(s.shape), str(s.dtype)) for s in (gs, us, ds)]
+        raise ValueError("paired MLP requires FP16 quant states, matching gate/up and transposed down "
+                         f"dimensions; gate/up/down states={details}")
     return PairedFrozenMLP.apply(x, gate, up, down, gs, us, ds)
 
 

@@ -61,3 +61,11 @@ patch_paired_mlp() exists only for future diagnostic integration after the
 microbenchmarks pass. No full-run speed/quality or CUDA compilation result is
 available yet. Local verification: AST, CLI-independent checks and existing
 CPU format tests; CUDA tests skip on this development environment.
+
+First T4 test at 16c034c stopped at input validation before launching the paired
+kernel: the fixture's torch.randn weights defaulted to FP32, so quant_state.dtype
+was FP32 even though Linear4bit.compute_dtype was FP16. The fixture now explicitly
+quantizes FP16 source weights, matching the intended T4 model route; the kernel's
+FP16 restriction is retained. Tests assert quant-state dtype before numerical
+comparison. Benchmark uses the same corrected fixture. No CUDA correctness or
+performance result for the paired kernels has been established yet.

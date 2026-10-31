@@ -12,7 +12,9 @@ def make_frozen_mlp(dim=1536, hidden=8960):
                             ("down_proj", hidden, dim)):
         layer = bnb.nn.Linear4bit(ins, outs, bias=False, compute_dtype=torch.float16,
                                  compress_statistics=True, quant_type="nf4")
-        layer.weight = bnb.nn.Params4bit(torch.randn(outs, ins) * .02,
+        # compute_dtype controls GEMM, not the source dtype recorded in
+        # quant_state. Quantize FP16 source weights like the actual T4 model.
+        layer.weight = bnb.nn.Params4bit(torch.randn(outs, ins, dtype=torch.float16) * .02,
             requires_grad=False, compress_statistics=True, quant_type="nf4")
         layer = layer.cuda()
         # Simulate the already-initialized frozen projections of the live model.
@@ -34,6 +36,8 @@ class PairedMLPTests(unittest.TestCase):
         try:
             for dim, hidden in ((64, 192), (1536, 8960)):
                 module = make_frozen_mlp(dim, hidden)
+                for name in ("gate_proj", "up_proj", "down_proj"):
+                    self.assertEqual(getattr(module, name).weight.quant_state.dtype, torch.float16)
                 for length in (256, 257):
                     with self.subTest(dim=dim, hidden=hidden, length=length):
                         # Noncontiguous input + partial Triton tile are intentional.
