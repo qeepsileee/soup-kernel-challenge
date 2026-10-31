@@ -87,3 +87,42 @@ python -m solution.bench_retained_nf4 --retain 0 --dx-layout transposed --tokens
 The benchmark accepts --retain 0/1/kv and --dx-layout original/transposed,
 always compares against retention off/original layout, and restores both
 environment variables on exit. Only choose policies after measured benefit.
+
+## Layout rejected after T4 measurement
+
+User ran 8e44f13: all 51 solution tests passed. CUDA dX-layout microbenchmarks
+with retention disabled consistently regressed. Speed ratios base/candidate:
+
+| Projection | 2048 rows | 512 rows |
+|---|---:|---:|
+| q | 0.845 | 0.919 |
+| k | 0.920 | 0.940 |
+| v | 0.929 | 0.927 |
+| o | 0.867 | 0.918 |
+| gate | 0.824 | 0.592 |
+| up | 0.825 | 0.554 |
+| down | 0.858 | 0.614 |
+
+Do not enable transposed dX in the solution. The experiment remains off by
+default; mathematical correctness did not imply performance improvement.
+There is no reason to spend a full official run on this rejected layout.
+
+Only the small K/V retention policy is ready for whole-model evaluation. It
+does not change GEMM layout or arithmetic; it removes a backward decode for
+the small projections. Candidate may provide only a small total benefit.
+No whole-run speed or peak-memory result exists for it yet. Run with pinned
+8e44f13 code and these explicit settings to avoid environment ambiguity:
+
+```bash
+export SOUP_EXPERIMENT_HEAD_CHUNK=128
+export SOUP_EXPERIMENT_PRECOMPUTE_HEAD=1
+export SOUP_EXPERIMENT_HALF_STORAGE=1
+export SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT=kv
+export SOUP_EXPERIMENT_NF4_DX_LAYOUT=original
+python harness/run_task.py --repeats 2 --out runs_retained_kv
+python harness/check_rules.py --result runs_retained_kv/result.json
+```
+
+Validated fallback remains dee0170 with the first three flags only:
+67.66s / 4269MiB. The retention microbenchmarks do not demonstrate a path to
+below 50s. That target still requires a substantially larger improvement.
