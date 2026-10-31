@@ -4,6 +4,24 @@ import unittest
 
 @unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch required")
 class HalfStorageTests(unittest.TestCase):
+    def test_mixed_dtype_comparison_matches_explicit_round_trip(self):
+        import torch
+        from solution.half_storage import convert_frozen_exact
+
+        cases = ([0., -0., 1., -1., 65504., 2**-24, float("inf"), -float("inf")],
+                 [0.12345679], [65520.], [2**-25], [1e-40], [float("nan")])
+        for values in cases:
+            with self.subTest(values=values):
+                source = torch.tensor(values, dtype=torch.float32)
+                half = source.half()
+                expected = torch.equal(source, half.float())
+                self.assertEqual(torch.equal(source, half), expected)
+                model = torch.nn.Module()
+                model.weight = torch.nn.Parameter(source.clone(), requires_grad=False)
+                stats = convert_frozen_exact(model)
+                self.assertEqual(stats["parameters"], int(expected))
+                self.assertEqual(model.weight.dtype, torch.float16 if expected else torch.float32)
+
     def test_exact_values_aliases_and_exclusions(self):
         import torch
         from solution.half_storage import convert_frozen_exact

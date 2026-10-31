@@ -17,7 +17,10 @@ def convert_frozen_exact(model):
                 continue
             half = parameter.detach().to(torch.float16)
             # Reject overflow, underflow and any change of parameter value.
-            if not torch.equal(parameter.detach(), half.float()):
+            # torch.equal compares values across dtypes. On CUDA the mixed
+            # FP32/FP16 comparison loads/casts directly, so do not materialize
+            # another full FP32 embedding/head just to check its round trip.
+            if not torch.equal(parameter.detach(), half):
                 continue
             saved += parameter.numel() * 2
             count += 1

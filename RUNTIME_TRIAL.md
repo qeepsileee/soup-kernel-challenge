@@ -25,6 +25,12 @@ This branch has not established a faster or smaller official result yet.
   original native attention backend stay unchanged. Query and key activation
   values are not needed for this derivative, so only cos/sin are saved.
   Unsupported geometry, dtype or differentiable cos/sin use HF's original path.
+* The exact half-storage check compares FP32 parameters directly with the FP16
+  candidate using torch.equal. CUDA compares them in the common FP32 dtype
+  without materializing a full FP32 copy of the half candidate. This preserves
+  the acceptance/rejection test, including NaNs, overflow and underflow, while
+  removing an avoidable large setup temporary. No new kernel compilation is
+  required for this change. A GPU allocation test checks it against the old path.
 
 The shared-input scheme can remove roughly one [4,512,1536] FP16 saved tensor
 per layer (about 6MiB at full length); this is an allocation argument, NOT an
@@ -45,7 +51,8 @@ dropout-scale arithmetic checks. This Mac has no torch/triton/CUDA; the new GPU
 tests are skipped locally, not reported as passes. GPU tests cover strided/tail
 RoPE and scaled gradients, RNG, exact dropped-input reconstruction, real PEFT
 q/v x/A/B gradients, snapshot sharing, fused pack tails and a real Qwen attention
-forward/backward with compact-KV hooks composed with the new hooks.
+forward/backward with compact-KV hooks composed with the new hooks. Half-storage
+tests compare exact values and allocation peaks against the explicit FP32 copy.
 
 On the pinned Kaggle T4 environment, with no SOUP_EXPERIMENT_* variables:
 
@@ -72,3 +79,5 @@ Format/API references only; Triton implementations written in this repository:
 * https://raw.githubusercontent.com/pytorch/pytorch/v2.11.0/aten/src/ATen/native/Dropout.cpp
 * https://raw.githubusercontent.com/pytorch/pytorch/v2.11.0/aten/src/ATen/native/cuda/Dropout.cu
 * https://raw.githubusercontent.com/huggingface/transformers/v5.16.1/src/transformers/models/qwen2/modeling_qwen2.py
+* https://raw.githubusercontent.com/pytorch/pytorch/v2.11.0/aten/src/ATen/native/cuda/Equal.cpp
+* https://raw.githubusercontent.com/pytorch/pytorch/v2.11.0/aten/src/ATen/TensorIterator.cpp

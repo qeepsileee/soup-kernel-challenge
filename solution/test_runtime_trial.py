@@ -4,6 +4,37 @@ from solution.cuda_test_support import GPU_AVAILABLE
 
 @unittest.skipUnless(GPU_AVAILABLE, "PyTorch + Triton + CUDA required")
 class RuntimeTrialTests(unittest.TestCase):
+    def test_half_storage_comparison_preserves_values_and_lowers_setup_peak(self):
+        import torch
+        from solution.half_storage import convert_frozen_exact
+        for values in ([0., -0., 1., 65504., 2**-24, float("inf")],
+                       [0.12345679], [65520.], [2**-25], [1e-40], [float("nan")]):
+            source = torch.tensor(values, device="cuda", dtype=torch.float32)
+            half = source.half()
+            self.assertEqual(torch.equal(source, half), torch.equal(source, half.float()))
+
+        source = torch.full((4 * 1024 * 1024,), 1.5, device="cuda", dtype=torch.float32)
+
+        def measure(candidate):
+            model = torch.nn.Module()
+            model.weight = torch.nn.Parameter(source.clone(), requires_grad=False)
+            torch.cuda.synchronize()
+            before = torch.cuda.memory_allocated()
+            torch.cuda.reset_peak_memory_stats()
+            if candidate:
+                self.assertEqual(convert_frozen_exact(model)["parameters"], 1)
+            else:
+                half = model.weight.detach().half()
+                self.assertTrue(torch.equal(model.weight.detach(), half.float()))
+                model.weight.data = half
+            torch.cuda.synchronize()
+            peak = torch.cuda.max_memory_allocated() - before
+            torch.testing.assert_close(model.weight, source.half(), rtol=0, atol=0)
+            return peak
+
+        old_peak, new_peak = measure(False), measure(True)
+        self.assertLess(new_peak, old_peak - source.numel() * source.element_size() * .75)
+
     def test_actual_qwen_attention_composes_all_saved_hooks(self):
         import torch
         from unittest.mock import patch
