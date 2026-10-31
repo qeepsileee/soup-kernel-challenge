@@ -1,4 +1,11 @@
-# Frozen FP16 storage candidate (not yet GPU validated)
+# Frozen FP16 storage candidate
+
+Update 2026-10-31: full public-task validation passed at dee0170 with
+HEAD_CHUNK=128, PRECOMPUTE_HEAD=1, HALF_STORAGE=1 (all prefixed
+SOUP_EXPERIMENT_). Mean 67.66s / peak 4269MiB, all ten checks and 79 Soup
+regressions passed. Eval loss 2.04967 -> 2.04944 (-0.011%). See
+VALIDATED_RESULTS.md for exact runs and cross-session timing limits.
+The candidate remains opt-in; original implementation notes follow.
 
 Verified fallback: commit `2f7e59cd359d23245b34fd3244b3286f290010d3`,
 71.8 s / 5363 MiB, all ten checks passed on the public task.

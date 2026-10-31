@@ -1,6 +1,43 @@
 # Validated public-data run on Kaggle T4
 
-## Latest validated candidate: precomputed head gradient, chunk 128
+## Latest validated candidate: half storage + precomputed head, chunk 128
+
+Code tested: dee0170041604400b1ddcc24eeab766b4a569ea0. Recorded 2026-10-31.
+Source: user's official Kaggle output, runs_head128_half_storage/result.json.
+Required settings (all three): SOUP_EXPERIMENT_HEAD_CHUNK=128,
+SOUP_EXPERIMENT_PRECOMPUTE_HEAD=1, SOUP_EXPERIMENT_HALF_STORAGE=1.
+Defaults alone do not reproduce this configuration.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 76.92 | 14345 |
+| solution_1 | 66.53 | 4269 |
+| solution_2 | 68.79 | 4269 |
+| base_2 | 84.14 | 14345 |
+
+Means 80.53s / 67.66s; reported speedup 1.190x (16.0% less wall time).
+Memory ratio 3.360x; reduction 10076MiB (70.2%). Eval losses display 2.04967
+base / 2.04944 solution (-0.011%); this small decrease is not evidence of
+general quality improvement. Loss curves differ by 0.04% first step and mean.
+Own kernels: 8.1%, lowest of two runs. ALL TEN CHECKS PASSED, 79 Soup tests
+passed. The same code's complete solution suite previously passed 49 tests.
+The half-storage conversion and changed activation rounding now pass the
+public-task quality/metric/adapter checks; hidden-data review remains pending.
+
+Compared with the prior configuration's 5423MiB peak, this run uses 1154MiB
+less (21.3%). Whole-run timing changes cannot be attributed solely to half
+storage: paired base time also fell from 87.19s to 80.53s and the speed ratio
+remained 1.190x. Keep the exact pin, flags and Kaggle artifacts as fallback.
+Target below 50s has NOT been achieved: remaining gap from this mean is >17.66s.
+The user-reported competitor's 4683MiB is exceeded on memory (4269MiB uses
+414MiB less), but their reported 54.8s remains faster; measurement equivalence
+has not been independently verified.
+
+Profile this current configuration using `python -m solution.profile_backward
+--half-storage` at diagnostic commit 8a275cd or later. That instrumentation is
+not part of the scored measurement and its elapsed time must not be scored.
+
+## Prior validated candidate: precomputed head gradient, chunk 128
 
 Code tested: dee0170041604400b1ddcc24eeab766b4a569ea0. Recorded 2026-10-31.
 Source: user's official Kaggle output, runs_head128_precomputed/result.json.
