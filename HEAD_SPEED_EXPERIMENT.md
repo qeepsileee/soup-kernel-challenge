@@ -52,3 +52,35 @@ to their defaults to reproduce the verified implementation.
 
 Local checks: AST parsing and whitespace checks pass. CUDA tests are explicitly
 skipped on the development Mac because its Python environment lacks PyTorch.
+
+## First user-supplied T4 diagnostic
+
+| Sequence chunk | Recompute | Precompute | Paired precompute speedup |
+|---|---:|---:|---|
+| 64 | 116.42 ms | 89.07 ms | 1.330, 1.343, 1.336, 1.339 |
+| 128 | 109.58 ms | 81.18 ms | 1.494, 1.498, 1.494, 1.497 |
+| 256 | 111.01 ms | 87.05 ms | 1.454, 1.479, 1.438, 1.440 |
+
+Recompute and precompute rows were measured in separate ABBA sets, each with
+its own chunk=64 recompute baseline (116.86--126.42 ms across the sweep).
+The fastest candidate is chunk=128/precompute, not chunk=256. Its local
+allocated peak was 1531 MiB vs about 1453 MiB for the chunk=64 baseline.
+Do not infer 1.5x whole-training speedup from this component benchmark.
+
+That notebook reported 13 passed / 36 skipped: the loss tests used the NF4
+suite's availability guard, unnecessarily requiring bitsandbytes. Standalone
+loss tests now use a PyTorch+Triton+CUDA guard. No CUDA correctness/quality
+claim is made from the earlier skipped tests. Install the full pinned training
+environment, rerun all solution tests, then measure the winning candidate with:
+
+```bash
+export SOUP_EXPERIMENT_HEAD_CHUNK=128
+export SOUP_EXPERIMENT_PRECOMPUTE_HEAD=1
+python task/prepare_data.py
+python harness/run_task.py --repeats 2 --out runs_head128_precomputed
+python harness/check_rules.py --result runs_head128_precomputed/result.json
+```
+
+Keep frozen half storage disabled for this comparison to isolate the change.
+Only adopt if the official quality and all other checks pass. Matching baseline
+quality within evaluation tolerances is the objective; no quality gain is promised.

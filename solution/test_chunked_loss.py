@@ -1,7 +1,7 @@
 """Unit tests for Chunked LM Head + Fused CE + Backward."""
 
 import unittest
-from solution.test_nf4 import GPU_AVAILABLE
+from solution.cuda_test_support import GPU_AVAILABLE
 
 
 @unittest.skipUnless(GPU_AVAILABLE, "CUDA dependencies required")
