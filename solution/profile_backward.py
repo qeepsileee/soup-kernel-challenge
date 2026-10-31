@@ -30,6 +30,7 @@ def main():
                 "SOUP_EXPERIMENT_PRECOMPUTE_HEAD": "0" if args.recompute_head else "1",
                 "SOUP_EXPERIMENT_HALF_STORAGE": "1" if args.half_storage else "0"}
     os.environ.update(settings)
+    print("Diagnostic settings:", settings, flush=True)
     import torch
     import yaml
     from torch.autograd import DeviceType
@@ -170,6 +171,7 @@ def main():
             row["calls"] += 1
             row["gpu_us_self"] += float(event.self_device_time_total)
     total_us = sum(k["time_us"] for k in kernels)
+    decode_kernel_us = sum(k["time_us"] for k in kernels if k["name"] == "nf4_decode_kernel")
     ranges = sorted(ranges.values(), key=lambda r: -r["gpu_us_inclusive"])
     copies = sorted(copies.values(), key=lambda r: -r["gpu_us_self"])
     categories = {}
@@ -180,6 +182,7 @@ def main():
                                 "percent_of_kernel_time": 100 * us / total_us if total_us else None}
     report = {"diagnostic_only": True, "settings": settings, "active_steps": _train.PROFILE_ACTIVE,
               "total_kernel_ms": total_us / 1000, "categories": categories,
+              "nf4_decode_kernel_ms_unpartitioned": decode_kernel_us / 1000,
               "ranges_inclusive": ranges, "copy_ops_self": copies,
               "kernels": sorted(kernels, key=lambda r: -r["time_us"])}
     path = out / "backward_breakdown.json"
@@ -187,9 +190,13 @@ def main():
     print("\n=== DIAGNOSTIC GPU WORK (not a score) ===")
     for name, row in categories.items():
         percent = row["percent_of_kernel_time"]
+        if "decode:" in name and row["gpu_ms"] == 0 and decode_kernel_us:
+            print(f"{name:28} CUDA attribution unavailable (see raw decode kernel total)")
+            continue
         share = f"{percent:.1f}%" if percent is not None else "unavailable"
         print(f"{name:28} {row['gpu_ms']:9.2f} ms | {share}")
     print("Ranges overlap: backward includes decode/dX GEMM. Do not sum all categories.")
+    print(f"Raw nf4_decode_kernel: {decode_kernel_us/1000:.2f} ms; not partitioned into forward/backward.")
     print("=== TOP COPY/CAST SOURCES ===")
     for row in copies[:15]:
         print(f"{row['gpu_us_self']/1000:8.2f}ms | {row['calls']:5d} | "

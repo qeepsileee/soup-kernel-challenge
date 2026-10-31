@@ -1,5 +1,6 @@
 """NF4 linear: retain bnb's custom GEMM selection, accelerate its unfused path."""
 from importlib.metadata import version
+import os
 import torch
 from .nf4 import dequantize_nf4, supported
 
@@ -35,18 +36,25 @@ class NF4Linear(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, packed, bias, state):
         ctx.state = state
-        ctx.save_for_backward(packed)
         if uses_custom_gemm(x, state):
+            ctx.save_for_backward(packed)
             return original_custom_forward(x, packed, bias, state)
         w = dequantize_nf4(packed, state).to(x.dtype)
+        if ctx.needs_input_grad[0] and os.environ.get("SOUP_EXPERIMENT_RETAIN_NF4_WEIGHT") == "1":
+            # This immutable tensor belongs to this autograd invocation, never a
+            # shared scratch buffer. Release normally when backward is freed.
+            ctx.save_for_backward(packed, w)
+        else:
+            ctx.save_for_backward(packed)
         return torch.nn.functional.linear(x, w, bias)
 
     @staticmethod
     def backward(ctx, grad):
         if not ctx.needs_input_grad[0]:
             return None, None, None, None
-        packed, = ctx.saved_tensors
-        w = dequantize_nf4(packed, ctx.state).to(grad.dtype)
+        saved = ctx.saved_tensors
+        packed = saved[0]
+        w = saved[1] if len(saved) == 2 else dequantize_nf4(packed, ctx.state).to(grad.dtype)
         return torch.matmul(grad, w), None, None, None
 
 
