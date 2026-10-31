@@ -14,6 +14,7 @@ The rules in short (the README and the task statement have the full ones):
 """
 
 def apply():
+    # MEMORY TRIAL BRANCH: no full-task validation yet. Working fallback: 85b03db.
     from .swiglu import patch_qwen2_mlp
     from .nf4 import patch_dequantize
     from .nf4_linear import patch_linear
@@ -24,6 +25,8 @@ def apply():
     from .patch_chunked_loss import patch_chunked_loss
     from .compressed_mlp import patch_compressed_mlp
     from .half_storage import patch_half_storage
+    from .nf4_saved_mlp import patch_nf4_saved_mlp
+    from .lossless_saved import patch_lossless_saved
 
     patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
     patch_dequantize()  # participant 3: validated NF4 decoder; retain bnb matmul
@@ -35,5 +38,7 @@ def apply():
     patch_chunked_loss()  # fixed chunk=128, precomputed hidden gradient
     patch_compressed_mlp()  # INT8 saved activations; validated on the public task
     patch_half_storage()  # exact-value FP16 frozen storage; no env flags required
+    patch_nf4_saved_mlp()  # trial: approximate NF4 saved activations, including first batch
+    patch_lossless_saved()  # trial: exact compact KV and bitpacked dropout saved masks
     # Both custom dX GEMM experiments regressed on T4. Keep them opt-in via
     # bench_nf4 flags, never activate them in the normal training entry point.
