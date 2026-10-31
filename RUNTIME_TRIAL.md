@@ -57,14 +57,22 @@ tests compare exact values and allocation peaks against the explicit FP32 copy.
 On the pinned Kaggle T4 environment, with no SOUP_EXPERIMENT_* variables:
 
 ```bash
-python -u -m pytest solution/test_runtime_trial.py -q
-python -u -m solution.bench_runtime_trial --tokens 512
-python -u -m solution.bench_runtime_trial --tokens 128
-python -u -m pytest solution -q
-python -u task/prepare_data.py
-python -u harness/run_task.py --repeats 2 --out runs_runtime_trial
-python -u harness/check_rules.py --result runs_runtime_trial/result.json
+bash tools/run_kaggle_runtime_trial.sh
 ```
+
+The standalone script checks CUDA/T4, restores missing or mismatched pinned
+training dependencies before pytest, and verifies actual NF4/PEFT imports.
+It skips pip if all pinned distributions are already present. Package setup
+finishes before any measured harness child starts; no packages are installed
+by solution.apply() or during training. Experiment variables are unset.
+Existing output directories are preserved by choosing a timestamped output name.
+
+The first supplied d481ed6 run used a fresh Kaggle session without bitsandbytes:
+40 tests passed, 31 were skipped and four integration tests stopped at the
+missing import. The full harness was not reached. These failures do not establish
+a numerical failure or full-task success. Restoring the pinned environment and
+rerunning the complete suite is required. The original CUDA-only component
+checks ran, but NF4/PEFT integration and full quality still remain unvalidated.
 
 The diagnostic benchmark compares against the parent's packed-mask dropout and
 native RoPE, not against an unoptimized solution. It alternates A/B order with
