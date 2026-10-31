@@ -89,3 +89,6 @@ nvidia-smi
 printf '[trial] Official measurement: two base and two solution runs, then eval\n'
 python -u harness/run_task.py --repeats 2 --out "$trial_out_dir"
 python -u harness/check_rules.py --result "$trial_out_dir/result.json"
+printf '[trial] Additional dispatch audit: own RoPE must run in each measured solution\n'
+python -u -m solution.summarize_run "$trial_out_dir/result.json" \
+    --require-kernel rotary_forward_kernel --require-kernel rotary_backward_kernel

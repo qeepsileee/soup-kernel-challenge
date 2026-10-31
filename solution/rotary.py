@@ -68,8 +68,14 @@ def supported(q, k, cos, sin, unsqueeze_dim=1):
             or q.shape[2] != k.shape[2] or not q.numel() or not k.numel()
             or any(x.stride(-1) != 1 for x in (q, k, cos, sin))):
         return False
-    shape = (q.shape[0], q.shape[2], 128)
-    return tuple(cos.shape) == shape and tuple(sin.shape) == shape
+    # Qwen2Model's default position_ids are [1,T], shared across the batch.
+    # Both [1,T,D] and per-example [B,T,D] embeddings are valid broadcasts.
+    return all(value.shape[0] in (1, q.shape[0])
+               and tuple(value.shape[1:]) == (q.shape[2], 128) for value in (cos, sin))
+
+
+def _position_strides(value):
+    return (0 if value.shape[0] == 1 else value.stride(0)), value.stride(1)
 
 
 class Rotary(torch.autograd.Function):
@@ -82,7 +88,7 @@ class Rotary(torch.autograd.Function):
             with torch.cuda.device(x.device):
                 rotary_forward_kernel[(triton.cdiv(b * h * t, 4),)](
                     x, cos, sin, y, t, h, b, *x.stride()[:3], *y.stride()[:3],
-                    *cos.stride()[:2], *sin.stride()[:2], 4, num_warps=4,
+                    *_position_strides(cos), *_position_strides(sin), 4, num_warps=4,
                     enable_fp_fusion=False)
             outputs.append(y)
         ctx.save_for_backward(cos, sin)
@@ -112,7 +118,7 @@ class Rotary(torch.autograd.Function):
             with torch.cuda.device(grad.device):
                 rotary_backward_kernel[(triton.cdiv(b * h * t, 4),)](
                     grad, cos, sin, dx, t, h, b, *grad.stride()[:3], *dx.stride()[:3],
-                    *cos.stride()[:2], *sin.stride()[:2], 4, num_warps=4,
+                    *_position_strides(cos), *_position_strides(sin), 4, num_warps=4,
                     enable_fp_fusion=False)
             grads.append(dx)
         return *grads, None, None

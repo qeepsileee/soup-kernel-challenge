@@ -4,6 +4,76 @@ from solution.cuda_test_support import GPU_AVAILABLE
 
 @unittest.skipUnless(GPU_AVAILABLE, "PyTorch + Triton + CUDA required")
 class RuntimeTrialTests(unittest.TestCase):
+    def test_real_qwen_model_default_positions_dispatch_rotary(self):
+        import torch
+        from unittest.mock import patch
+        from transformers import Qwen2Config
+        from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
+        from solution.rotary import Rotary, patch_rotary, unpatch_rotary
+        unpatch_rotary()
+        config = Qwen2Config(vocab_size=64, hidden_size=256, intermediate_size=512,
+                             num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=1)
+        config._attn_implementation = "sdpa"
+        model = Qwen2Model(config).cuda().half().train()
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+        x = torch.randn(2, 32, 256, device="cuda", dtype=torch.float16) * .2
+        grad = torch.randn_like(x) * 8
+
+        def run():
+            value = x.clone().requires_grad_(True)
+            y = model(inputs_embeds=value, use_cache=False).last_hidden_state
+            y.backward(grad)
+            return y.detach(), value.grad
+
+        ref = run()
+        try:
+            patch_rotary()
+            with patch.object(Rotary, "apply", wraps=Rotary.apply) as spy:
+                actual = run()
+            self.assertEqual(spy.call_count, 1, "the normal model must launch the own RoPE path")
+            self.assertEqual(tuple(spy.call_args.args[2].shape), (1, 32, 128))
+            torch.testing.assert_close(actual[0], ref[0], rtol=0, atol=0)
+            torch.testing.assert_close(actual[1], ref[1], rtol=1e-3, atol=1e-3)
+        finally:
+            unpatch_rotary()
+
+    def test_rotary_batch_broadcast_forward_and_gradient_exact(self):
+        import torch
+        from unittest.mock import patch
+        from transformers.models.qwen2 import modeling_qwen2
+        from solution.rotary import Rotary, patch_rotary, unpatch_rotary, supported
+        unpatch_rotary()
+        original = modeling_qwen2.apply_rotary_pos_emb
+        patch_rotary()
+        candidate = modeling_qwen2.apply_rotary_pos_emb
+        try:
+            for dtype in (torch.float16, torch.float32):
+                for cb, sb in ((1, 1), (1, 2), (2, 1)):
+                    for length in (17, 512):
+                        with self.subTest(dtype=dtype, cb=cb, sb=sb, length=length):
+                            q, k = [torch.randn(2, length, h, 128, device="cuda", dtype=dtype)
+                                    .transpose(1, 2) for h in (12, 2)]
+                            cos = torch.randn(cb, length, 128, device="cuda", dtype=dtype)
+                            sin = torch.randn(sb, length, 128, device="cuda", dtype=dtype)
+                            grads = [torch.randn_like(value) * 8 for value in (q, k)]
+
+                            def run(fn):
+                                inputs = [value.clone().requires_grad_(True) for value in (q, k)]
+                                outputs = fn(*inputs, cos, sin)
+                                torch.autograd.backward(outputs, grads)
+                                return outputs, [value.grad for value in inputs]
+
+                            self.assertTrue(supported(q, k, cos, sin))
+                            ref, rg = run(original)
+                            with patch.object(Rotary, "apply", wraps=Rotary.apply) as spy:
+                                actual, ag = run(candidate)
+                            self.assertEqual(spy.call_count, 1)
+                            for a, b in zip((*actual, *ag), (*ref, *rg)):
+                                torch.testing.assert_close(a, b, rtol=0, atol=0)
+        finally:
+            unpatch_rotary()
+
     def test_half_storage_comparison_preserves_values_and_lowers_setup_peak(self):
         import torch
         from solution.half_storage import convert_frozen_exact

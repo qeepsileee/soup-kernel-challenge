@@ -9,6 +9,43 @@ from unittest.mock import patch
 
 
 class ArtifactSummaryTests(unittest.TestCase):
+    def test_required_kernel_must_launch_in_every_solution_raw_metrics(self):
+        from solution.summarize_run import main
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path = folder / "result.json"
+            path.write_text(json.dumps({"summary": {}, "runs": {"solution": [
+                {"run": "solution_1", "metrics": {"triton_launches": {"rotary_forward_kernel": 99}}},
+                {"run": "solution_2", "metrics": {"triton_launches": {"rotary_forward_kernel": 99}}},
+            ]}}))
+            for name, count in (("solution_1", 10), ("solution_2", 0)):
+                (folder / name).mkdir()
+                (folder / name / "metrics.json").write_text(json.dumps({
+                    "triton_launches": {"rotary_forward_kernel": count}}))
+
+            def report():
+                output = io.StringIO()
+                argv = ["summarize_run", str(path), "--require-kernel", "rotary_forward_kernel"]
+                with patch.object(sys, "argv", argv), contextlib.redirect_stdout(output):
+                    main()
+                return output.getvalue()
+
+            with self.assertRaisesRegex(SystemExit, "solution_2: rotary_forward_kernel"):
+                report()
+            (folder / "solution_2/metrics.json").write_text(json.dumps({
+                "triton_launches": {"rotary_forward_kernel": 12}}))
+            self.assertEqual(report().count("[dispatch]"), 2)
+
+    def test_required_kernel_rejects_missing_solution_runs(self):
+        from solution.summarize_run import main
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text(json.dumps({"summary": {}, "runs": {}}))
+            argv = ["summarize_run", str(path), "--require-kernel", "rotary_forward_kernel"]
+            with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(SystemExit, "no solution runs"):
+                    main()
+
     def test_steps_are_read_from_raw_metrics_and_missing_is_not_zero(self):
         from solution.summarize_run import main
         with tempfile.TemporaryDirectory() as tmp:

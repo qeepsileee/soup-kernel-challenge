@@ -8,12 +8,16 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result", type=Path)
+    parser.add_argument("--require-kernel", action="append", default=[],
+                        help="additional diagnostic: require this launch in every solution run")
     args = parser.parse_args()
     if not args.result.is_file():
         parser.error(f"result not found: {args.result}")
     result = json.loads(args.result.read_text())
     print(json.dumps(result.get("summary", {}), indent=2))
-    for runs in result.get("runs", {}).values():
+    missing_launches = []
+    solution_count = 0
+    for side, runs in result.get("runs", {}).items():
         for run in runs:
             path = args.result.parent / run["run"] / "metrics.json"
             # run_task deliberately removes step_s from the embedded metrics.
@@ -28,6 +32,15 @@ def main():
                 "median_step_s": metrics.get("median_step_s"),
                 "outside_loop_s": round(wall-loop, 2) if wall is not None and loop is not None else None,
             }))
+            if side == "solution":
+                solution_count += 1
+                if args.require_kernel:
+                    launches = metrics.get("triton_launches", {})
+                    counts = {name: launches.get(name, 0) for name in args.require_kernel}
+                    print("[dispatch]", run["run"], json.dumps(counts))
+                    for name, count in counts.items():
+                        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+                            missing_launches.append(f"{run['run']}: {name}")
     checks_path = args.result.parent / "checks.json"
     if checks_path.is_file():
         checks = json.loads(checks_path.read_text())
@@ -39,6 +52,9 @@ def main():
     else:
         print("checks.json not found; admission has not been established by this report")
     print("null means unavailable, not zero. apply_s overlaps outside_loop_s; do not add it again.")
+    if args.require_kernel and (not solution_count or missing_launches):
+        raise SystemExit("Additional dispatch audit failed (official checks unchanged): "
+                         + (", ".join(missing_launches) if solution_count else "no solution runs"))
 
 
 if __name__ == "__main__":

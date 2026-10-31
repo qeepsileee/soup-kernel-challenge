@@ -7,7 +7,7 @@ import time
 def main():
     import torch
     from transformers.models.qwen2 import modeling_qwen2
-    from .rotary import Rotary, unpatch_rotary
+    from .rotary import Rotary, supported, unpatch_rotary
     from .lossless_saved import patch_lora_dropouts, unpatch_lora_dropouts
     from .fast_dropout import (patch_fast_lora_dropouts, unpatch_fast_lora_dropouts,
                                shared_dropout_inputs)
@@ -25,8 +25,10 @@ def main():
     reference_rotary = modeling_qwen2.apply_rotary_pos_emb
     q, k = [torch.randn(4, length, h, 128, device="cuda", dtype=torch.float16)
             .transpose(1, 2).detach().requires_grad_(True) for h in (12, 2)]
-    cos = torch.randn(4, length, 128, device="cuda", dtype=torch.float16)
+    # Match default Qwen2Model position_ids: one shared row of positions.
+    cos = torch.randn(1, length, 128, device="cuda", dtype=torch.float16)
     sin = torch.randn_like(cos)
+    assert supported(q, k, cos, sin), "RoPE benchmark must exercise an eligible real-model geometry"
     rotary_grads = [torch.randn_like(t) for t in (q, k)]
     x = torch.randn(4, length, 1536, device="cuda", dtype=torch.float16, requires_grad=True)
     dropout_grad = torch.randn_like(x)
@@ -103,7 +105,7 @@ def main():
         torch.autograd.backward(outputs, grads)
         return elapsed, peak, resident
 
-    print(torch.cuda.get_device_name(), f"B=4 T={length}; baseline=validated memory codecs", flush=True)
+    print(torch.cuda.get_device_name(), f"B=4 T={length} cos_batch=1; baseline=validated memory codecs", flush=True)
     try:
         for kind in ("rotary", "dropout-adjoint", "shared-qv-adapters"):
             bases, candidates = [], []

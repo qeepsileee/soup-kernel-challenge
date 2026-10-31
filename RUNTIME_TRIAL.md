@@ -1,4 +1,4 @@
-# Runtime trial: fa12d01 passed public full-task validation
+# Runtime trial: fa12d01 validated; RoPE broadcast follow-up pending
 
 Branch: intoxicated/runtime-trial. Parent functional pin:
 c6f6096a58c29ef319e6d7ad40cfac01a561d369, validated at 69.835s / 3279MiB
@@ -17,6 +17,29 @@ shared-q/v path saves memory but regressed in time; retain that tradeoff explici
 RoPE was not launched in every training run, despite its faster microbenchmark:
 the original strict shape guard rejected batch=1 positional embedding broadcast.
 Its component speedup is not evidence of an active whole-training RoPE speedup.
+
+## Follow-up: batch-broadcast RoPE, not yet CUDA/full-task validated
+
+Qwen2Model's default position_ids are [1,T], so the rotary module returns
+cos/sin [1,T,128] shared across B examples. The previous guard required exactly
+[B,T,128] and therefore rejects that normal default model path. This is a
+specific dispatch gap consistent with the reported lack of launches; the
+prior console output does not expose each actual call's metadata.
+
+The follow-up accepts independent batch dimensions 1 or B for cos and sin,
+uses zero batch stride for shared tensors without expanding/materializing them,
+and otherwise preserves the validated math, layout guards and native fallback.
+New CUDA tests compare exact forward/backward for broadcast and mixed broadcast,
+and run a tiny real Qwen2Model with default position_ids, asserting own dispatch.
+The component benchmark now uses cos_batch=1 and verifies its geometry is eligible.
+These follow-up GPU tests are skipped locally on the Mac, not reported passed.
+
+After the unchanged official checks, the standalone launcher also audits raw
+per-run triton_launches for rotary_forward_kernel and rotary_backward_kernel.
+This additional experiment check reads artifacts only and changes no official
+measurement or checks. It prevents crediting a microbenchmark optimization that
+did not actually run in every measured solution. Preserve fa12d01 as the current
+validated 67.44s / 3119MiB fallback until the new pin passes the complete run.
 
 ## Changes
 
