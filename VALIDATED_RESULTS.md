@@ -1,6 +1,39 @@
 # Validated public-data run on Kaggle T4
 
-## Latest validated candidate: INT8 activations with runtime extents
+## Latest validated candidate: precomputed head gradient, chunk 128
+
+Code tested: dee0170041604400b1ddcc24eeab766b4a569ea0. Recorded 2026-10-31.
+Source: user's official Kaggle output, runs_head128_precomputed/result.json.
+Required configuration: SOUP_EXPERIMENT_HEAD_CHUNK=128,
+SOUP_EXPERIMENT_PRECOMPUTE_HEAD=1, half storage disabled. These are opt-in
+implementation settings, not changes to the task batch size or token sequence.
+
+| Run | Wall time (s) | Peak GPU memory (MiB) |
+|---|---:|---:|
+| base_1 | 90.00 | 14345 |
+| solution_1 | 73.65 | 5423 |
+| solution_2 | 72.85 | 5423 |
+| base_2 | 84.38 | 14345 |
+
+Means 87.19s / 73.25s; reported speedup 1.190x (16.0% less wall time).
+Memory ratio 2.645x; reduction 8922MiB (62.2%). Both eval losses display
+2.04962, relative difference +0.000%. Loss curves differ by about 0.01% mean.
+Own kernels: 8.1%, lowest of two runs. ALL TEN CHECKS PASSED, 79 Soup tests
+passed, complete solution suite 49 passed (no skips). Quality is confirmed
+within public-task tolerances; it is not established to be improved or identical
+on arbitrary inputs. The head gradient uses a rounding approximation.
+
+The previous configuration's 71.77s cannot be directly ranked against 73.25s:
+its paired base was 79.185s rather than 87.19s. The new paired speed ratio is
+higher, but an interleaved comparison of both solution configurations is still
+needed to isolate their whole-run difference. Below 50s has NOT been achieved.
+Keep this exact pin/settings and its Kaggle artifacts as a validated fallback.
+
+Next candidate: combine this head configuration with
+SOUP_EXPERIMENT_HALF_STORAGE=1. It remains unvalidated; recheck the complete
+task rather than assuming exact stored weight values imply unchanged arithmetic.
+
+## Prior validated candidate: INT8 activations with runtime extents
 
 Code tested: 2f7e59cd359d23245b34fd3244b3286f290010d3. Recorded 2026-10-31.
 Source: user's official Kaggle output; raw artifacts are in runs_int8_runtime/.
